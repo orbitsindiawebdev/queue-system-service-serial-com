@@ -119,7 +119,7 @@ dependencies {
     //swipe layout will be used for recyclerview left/right swipe
     implementation("com.github.Tunous:SwipeActionView:1.4.0")
 
-    implementation("com.chauthai.swipereveallayout:swipe-reveal-layout:1.4.0")
+   // implementation("com.chauthai.swipereveallayout:swipe-reveal-layout:1.4.0")
 
     // Lottie
     implementation("com.airbnb.android:lottie:3.4.0")

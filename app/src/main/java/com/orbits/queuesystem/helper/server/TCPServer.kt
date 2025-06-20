@@ -632,5 +632,9 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         fun removeClientHandler(clientId: String) {
             clientHandlers.remove(clientId)
         }
+
+        fun getAllClients(): List<ClientHandler> {
+            return clientHandlers.values.toList() // Return all client handlers without checking their connection status
+        }
     }
 }

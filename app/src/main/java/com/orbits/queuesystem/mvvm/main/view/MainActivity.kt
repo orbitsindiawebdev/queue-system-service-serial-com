@@ -661,10 +661,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             sentModel = getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: "")
                         )
 
-
-                        val token = getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: "")?.token
-                        callTokens(token ?: "", counterModel)
-
+                        if(!json.has("isFirst")){
+                            val token = getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: "")?.token
+                            callTokens(token ?: "", counterModel)
+                        }
 
                         if (!isDbUpdated){
                             updateDb(getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: ""))
@@ -742,8 +742,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             sentModel = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
                         )
 
-                        val token = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)?.token
-                        callTokens(token ?: "", counterModel)
+                       /* val token = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)?.token
+                        callTokens(token ?: "", counterModel)*/
 
                         if (!isDbUpdated){
                             updateDb(getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
@@ -790,11 +790,6 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             serviceType = json.get("serviceType")?.asString ?: ""
             println("here is service id $serviceId")
             val service = getServiceById(serviceId.asInt())
-            println("here is is the last token :::: ${service?.tokenEnd}")
-            println("here is is the service :::: $service")
-            println("here is is the current token :::: ${getCurrentServiceToken(serviceId)}")
-            println("here is is the counter id in ticket :::: ${getCounterIdForService(serviceId)}")
-           // (serviceId.isNotEmpty() && isCounterAssigned(serviceId)) && (getCurrentServiceToken(serviceId) <= service?.tokenEnd.asInt())
             if (serviceId.isNotEmpty() && isCounterAssigned(serviceId)) {
                 val model = TransactionListDataModel(
                     counterId = getCounterIdForService(serviceId),
@@ -812,36 +807,23 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 )
                 val dbModel = parseInTransactionDbModel(model, model.id ?: "")
                 addTransactionInDB(dbModel)
-                println("here is transaction id ${getAllTransactionFromDB()}")
                 sendMessageToWebSocketClient(
                     json.get("ticketId")?.asString ?: "",
                     createServiceJsonDataWithModel(serviceId, dbModel)
                 )
-                println("here is current token for service ${getCurrentServiceToken(serviceId)}")
-                println("here is end token for service ${service?.tokenEnd.asInt()}")
                 if (getCurrentServiceToken(serviceId) == service?.tokenEnd.asInt()){
-                    println("here is manage for tokens 111")
                     addServiceTokenToDB(
                         serviceId,
                         service?.tokenStart.asInt()
                     )
 
                 }else {
-                    println("here is manage for tokens 222")
                     addServiceTokenToDB(
                         serviceId,
                         getCurrentServiceToken(serviceId).plus(1)
                     )
                 }
-                println(
-                    "here is current token 111 ${
-                        getCurrentServiceToken(
-                            serviceId
-                        )
-                    }"
-                )
                 serviceId = ""
-                println("here is transactions 1111 ${getAllTransactionFromDB()}")
             }
         } else {
             sendMessageToWebSocketClient(
@@ -922,6 +904,41 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             onFailure(e)
         }
     }
+
+
+    private fun sendMessageToAllConnectedClients(
+        jsonObject: JsonObject,
+        onSuccess: () -> Unit,
+        onFailure: (Throwable) -> Unit
+    ) {
+        try {
+            // Get all the connected client handlers from your WebSocket manager
+            val connectedClients = TCPServer.WebSocketManager.getAllClients()
+
+            println("here is all clients connected $connectedClients")
+
+            // Loop through each client and send the message only if they are connected
+            connectedClients.forEach { clientHandler ->
+                if (clientHandler.isWebSocket) {
+                    Thread {
+                        try {
+                            val jsonMessage = gson.toJson(jsonObject)
+                            println("Sending message to client: ${clientHandler.clientId}")
+                            clientHandler.sendMessageToClient(clientHandler.clientId, jsonMessage)
+                            onSuccess() // Successfully sent the message
+                        } catch (e: Exception) {
+                            // Call failure callback for that particular client
+                            onFailure(e)
+                        }
+                    }.start()
+                }
+            }
+        } catch (e: Exception) {
+            // Call failure callback for errors outside the thread loop
+            onFailure(e)
+        }
+    }
+
 
 
     // This Function is used to send data's to displays connected to keypad when token is callout or next button pressed on keypad
