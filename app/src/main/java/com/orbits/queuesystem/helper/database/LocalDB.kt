@@ -147,6 +147,8 @@ object LocalDB {
                 data.token,
                 data.status,
                 data.id.asString(),
+                data.counterId,
+                data.counterType,
                 data.startKeypadTime,
                 data.issueTime,
                 data.endKeypadTime,
@@ -156,7 +158,22 @@ object LocalDB {
         }
         return db?.getAllTransaction() as ArrayList<TransactionDataDbModel?>
     }
-
+    fun Context.addTransactionInDBKeypad(data: TransactionDataDbModel): ArrayList<TransactionDataDbModel?> {
+        val db = AppDatabase.getAppDatabase(this).transactionDao()
+        if (db?.isTransactionPresent(data.issueTime) == true) {
+            db.updateTransactionOffline(
+                data.token,
+                data.status,
+                data.id.asString(),
+                data.counterId,
+                data.counterType,
+                data.startKeypadTime,
+                data.issueTime,
+                data.endKeypadTime,
+            )
+        }
+        return db?.getAllTransaction() as ArrayList<TransactionDataDbModel?>
+    }
 
     fun Context.getAllTransactionFromDB(): ArrayList<TransactionDataDbModel?>? {
         val db = AppDatabase.getAppDatabase(this).transactionDao()

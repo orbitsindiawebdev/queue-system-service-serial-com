@@ -13,13 +13,15 @@ interface TransactionDao {
 
     @Query(
         "UPDATE TransactionDataDbModel" +
-                " SET token =:token, status=:status ,startKeypadTime=:startKeypadTime,endKeypadTime=:endKeypadTime ,issueTime =:issueTime" +
+                " SET token =:token, status=:status ,startKeypadTime=:startKeypadTime,endKeypadTime=:endKeypadTime ,issueTime =:issueTime, counterId =:counterId, counterType =:counterType" +
                 " WHERE id =:id"
     )
     fun updateTransactionOffline(
         token: String?,
         status:String?,
         id: String?,
+        counterId: String?,
+        counterType: String?,
         startKeypadTime: String?,
         issueTime: String?,
         endKeypadTime: String?,

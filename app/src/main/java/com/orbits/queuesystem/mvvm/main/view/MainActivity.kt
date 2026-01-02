@@ -6,6 +6,7 @@ import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
 import android.speech.tts.Voice
+import android.util.Log
 import android.view.View
 import android.widget.Toast
 import androidx.annotation.RequiresApi
@@ -49,6 +50,7 @@ import com.orbits.queuesystem.helper.database.CounterDataDbModel
 import com.orbits.queuesystem.helper.database.LocalDB.addServiceInDB
 import com.orbits.queuesystem.helper.database.LocalDB.addServiceTokenToDB
 import com.orbits.queuesystem.helper.database.LocalDB.addTransactionInDB
+import com.orbits.queuesystem.helper.database.LocalDB.addTransactionInDBKeypad
 import com.orbits.queuesystem.helper.database.LocalDB.getAllResetData
 import com.orbits.queuesystem.helper.database.LocalDB.getAllServiceFromDB
 import com.orbits.queuesystem.helper.database.LocalDB.getAllTransactionCount
@@ -96,7 +98,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     private lateinit var headerLayout: NavHeaderLayoutBinding
 
     /*----------------------------------------- TCP server variables -----------------------------------------*/
-    private lateinit var tcpServer: TCPServer
+    private var tcpServer: TCPServer? = null
     private lateinit var socket: Socket
     private var outStream: OutputStream? = null
     private val arrListClients = CopyOnWriteArrayList<String>()
@@ -250,9 +252,14 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
     // Here the whole server is started via port number and device ip address
     private fun initializeSocket() {
+        if (tcpServer != null) {
+            Log.w("TCP", "Server already running")
+            return
+        }
+
         tcpServer = TCPServer(8085, this, this@MainActivity)
         Thread {
-            tcpServer.start()
+            tcpServer?.start()
         }.start()
 
 
@@ -338,7 +345,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         synchronized(arrListClients) {
             if (!json.isJsonNull) {
 
-                println("Received json in activity: $json")
+                println("Received json in activity: $json ${json.has(Constants.CONNECTION)}")
 
                 when {
                     // For Connection of every client
@@ -363,13 +370,13 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             println("here is serviceIds ${serviceIds}")
 
                             sendMessageToWebSocketClient(
-                                tcpServer.arrListMasterDisplays.lastOrNull() ?: "",
+                                tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "",
                                 createMasterDisplayJsonData(
                                     getRequiredTransactionWithServiceFromDB(serviceIds)
                                 )
                             )
                         }else {
-                            sendMessageToWebSocketClient(tcpServer.arrListMasterDisplays.lastOrNull() ?: "", createJsonData())
+                            sendMessageToWebSocketClient(tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "", createJsonData())
                         }
 
                     }
@@ -501,7 +508,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     }
 
     private fun manageKeypadData(json: JsonObject){
-        println("THIS IS KEYPAD TYPE MODULE ::")
+        println("THIS IS KEYPAD TYPE MODULE ::   $json")
         if (json.has(Constants.TRANSACTION)) {
             val model =  json.getAsJsonObject("transaction")
             serviceId = model?.get("serviceId")?.asString ?: ""
@@ -510,7 +517,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             if (serviceId.isNotEmpty()) {
                 val updateModel = TransactionListDataModel(
                     id = model?.get("id")?.asString ?: "",
-                    counterId = model?.get("counterId")?.asString ?: "",
+                    counterId = json.get("counterId")?.asString ?: "",
                     serviceId = serviceId,
                     entityID = model?.get("entityID")?.asString ?: "",
                     serviceAssign = serviceType,
@@ -523,8 +530,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     status = "2" // status 2 is for the keypad has completed that token
 
                 )
+                println("here is transaction data ${json.get("counterId")?.asString}-- $updateModel")
+
                 val dbModel = parseInTransactionDbModel(updateModel, updateModel.id ?: "")
-                addTransactionInDB(dbModel)  // here the transaction is update with new status which is 2 completed transaction
+                addTransactionInDBKeypad(dbModel)  // here the transaction is update with new status which is 2 completed transaction
 
                 println("here is transactions 0000 ${getAllTransactionFromDB()}")
                 println("here is counter data of counter ${getCounterFromDB(json.get("counterId")?.asString ?: "")}")
@@ -555,6 +564,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             callTokens(token ?: "", counterModel)
 
                             if (!isDbUpdated){
+                                Log.i("deepu", "manageKeypadData: 0 ${counterModel?.serviceId}")
                                 updateDb(getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
 
                                 isDbUpdated = true
@@ -594,6 +604,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     )
 
                     val issueModel = getTransactionFromDbWithCalledStatus(counterModel?.serviceId ?: "")
+                    Log.i("deepu", "manageKeypadData: $issueModel")
                     val changedModel = TransactionListDataModel(
                         id = issueModel?.id.asString(),
                         counterId = issueModel?.counterId,
@@ -604,8 +615,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         ticketToken = issueModel?.ticketToken,
                         keypadToken = issueModel?.keypadToken,
                         issueTime = issueModel?.issueTime,
-                        startKeypadTime = getStartTimeForKeypad(),
-                        endKeypadTime = issueModel?.endKeypadTime,
+                        startKeypadTime = json.get("startKeypadTime")?.asString ?: "",
+                        endKeypadTime = json.get("endKeypadTime")?.asString ?: "",
                         status = "2"
 
                     )
@@ -623,9 +634,11 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         )
 
                         val token = getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: "")?.token
+                        Log.i("deepu", "manageKeypadData:0 $token $counterModel")
                         callTokens(token ?: "", counterModel)
 
                         if (!isDbUpdated){
+                            Log.i("deepu", "manageKeypadData: 1 ${json.get("tokenNo")?.asString} ${counterModel?.serviceId}")
                             updateDb(getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: ""))
 
                             isDbUpdated = true
@@ -667,6 +680,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         }
 
                         if (!isDbUpdated){
+                            Log.i("deepu", "manageKeypadData: 2 ${json.get("repeatToken")?.asString} ${counterModel?.serviceId}")
                             updateDb(getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: ""))
 
                             isDbUpdated = true
@@ -708,29 +722,32 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "")
                 var isDbUpdated = false  // Flag to ensure the database is updated only once
 
+                val jsonObjectTransactionListDataModel =
+                    if (getLastTransactionFromDbWithStatusOne(counterModel?.serviceId) != null){
+                        getLastTransactionFromDbWithStatusOne(counterModel?.serviceId)
+                    }
+                    else if (getTransactionFromDbWithIssuedStatus(counterModel?.serviceId) != null){
+                            getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
+                    }else {
+                            null
+                        }
+
+
+
                 sendMessageToWebSocketClientWith(
                     json.get("counterId")?.asString ?: "",
                     createServiceJsonDataWithTransaction(
-                         if (getLastTransactionFromDbWithStatusOne(counterModel?.serviceId) != null){
-                            getLastTransactionFromDbWithStatusOne(counterModel?.serviceId)
-                        }
-                        else {
-                            if (getTransactionFromDbWithIssuedStatus(counterModel?.serviceId) != null){
-                                getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
-                            }else {
-                                TransactionListDataModel(
-                                    id = "",
-                                    counterId = "",
-                                    serviceId = counterModel?.serviceId,
-                                    entityID = "",
-                                    serviceAssign = counterModel?.counterType,
-                                    token = "000",
-                                    ticketToken = "000",
-                                    keypadToken = "000",
-                                )
-                            }
-
-                        }
+                        jsonObjectTransactionListDataModel
+                            ?: TransactionListDataModel(
+                                id = "",
+                                counterId = "",
+                                serviceId = counterModel?.serviceId,
+                                entityID = "",
+                                serviceAssign = counterModel?.counterType,
+                                token = "000",
+                                ticketToken = "000",
+                                keypadToken = "000",
+                            )
                     ),
                     onSuccess = {
 
@@ -746,7 +763,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         callTokens(token ?: "", counterModel)*/
 
                         if (!isDbUpdated){
-                            updateDb(getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
+                            Log.i("deepu", "manageKeypadData: 3 ${jsonObjectTransactionListDataModel}")
+                            updateDb(jsonObjectTransactionListDataModel)
 
                             isDbUpdated = true
                         }
@@ -776,11 +794,14 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             status = "1"
         )
 
-        val changedDisplayDbModel = parseInTransactionDbModel(changedDisplayModel, changedDisplayModel.id ?: "")
-        println("Here is the changed transactions model: $changedDisplayDbModel")
+        if(sentModel!=null){
+            val changedDisplayDbModel = parseInTransactionDbModel(changedDisplayModel, changedDisplayModel.id ?: "")
+            println("Here is the changed transactions model: $changedDisplayDbModel")
 
-        // Update the database
-        addTransactionInDB(changedDisplayDbModel)
+            // Update the database
+            addTransactionInDB(changedDisplayDbModel)
+        }
+
     }
 
     private fun manageTicketData(json: JsonObject){
@@ -887,7 +908,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 Thread {
                     try {
                         val jsonMessage = gson.toJson(jsonObject)
-                        println("Sending message to client: $clientId")
+                        println("Sending message to client: $clientId $jsonObject")
                         clientHandler.sendMessageToClient(clientId, jsonMessage)
                         onSuccess() // when client is connected the success block is sent and based on that next functions are called
                     } catch (e: Exception) {
@@ -961,9 +982,9 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         it?.id ?: "",
                         createServiceJsonDataWithTransaction(sentModel),
                         onSuccess = {
-                            if (tcpServer.arrListMasterDisplays.isNotEmpty()){
+                            if (tcpServer?.arrListMasterDisplays?.isNotEmpty() == true){
                                 sendMessageToWebSocketClient(
-                                    tcpServer.arrListMasterDisplays.lastOrNull() ?: "",
+                                    tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "",
                                     createMasterDisplayJsonDataWithMsg(
                                         getRequiredTransactionFromDB(),
                                     )
@@ -1011,7 +1032,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         // Add the token and counterModel to the queue
         tokenQueue.add(Pair(token, counterModel))
 
-        println("here is token calling 000")
+        println("here is token calling 000 $token")
 
         // Start processing the queue if not already speaking
         if (!isSpeaking) {
@@ -1109,5 +1130,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 }
             }
         }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        tcpServer?.stop()
     }
 }

@@ -18,7 +18,7 @@ object TransactionConfig {
             entityID = model?.id ?: "",
             keypadToken = model?.keypadToken,
             counterId = model?.counterId ?: "",
-            counterType = null,
+            counterType = model?.counterId ?: "",
             serviceAssign = model?.serviceAssign,
             token = model?.token,
             ticketToken = model?.ticketToken,

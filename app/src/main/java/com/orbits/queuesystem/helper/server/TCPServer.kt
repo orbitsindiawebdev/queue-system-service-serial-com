@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import androidx.annotation.RequiresApi
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
@@ -19,6 +20,7 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
 import java.security.MessageDigest
@@ -35,6 +37,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     var arrListClients = ArrayList<String>()
     var arrListMasterDisplays = ArrayList<String>()
     var masterDisplay = 1
+    @Volatile private var isRunning = false
 
     init {
         connectedClientsList.value = emptyList()
@@ -43,28 +46,38 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     fun start() {
         try {
             serverSocket = ServerSocket(port)
-            println("TCP Server started on port $port")
-            while (true) {
-                val clientSocket = serverSocket?.accept()
-                val clientHandler = ClientHandler(clientSocket)
-                println("Client connected: ${clientSocket?.inetAddress}")
-                // Handle client connection on a new thread
-                if (!clients.containsKey(clientHandler.clientId)) {
-                    Thread(clientHandler).start()
-                    // Add client to connectedClientsList
+//            serverSocket?.reuseAddress = true
+//            serverSocket!!.bind(InetSocketAddress(port))
+            isRunning = true
 
-                } else {
-                    println("Client ${clientHandler.clientId} is already connected.")
-                    // Optionally, you can notify or handle this scenario accordingly
+            while (isRunning) {
+                while (true) {
+                    val clientSocket = serverSocket?.accept()
+                    val clientHandler = ClientHandler(clientSocket)
+                    println("Client connected: ${clientSocket?.inetAddress}")
+                    // Handle client connection on a new thread
+                    if (!clients.containsKey(clientHandler.clientId)) {
+                        Thread(clientHandler).start()
+                        // Add client to connectedClientsList
+
+                    } else {
+                        println("Client ${clientHandler.clientId} is already connected.")
+                        // Optionally, you can notify or handle this scenario accordingly
+                    }
                 }
             }
+            println("TCP Server started on port $port")
+
         } catch (e: Exception) {
+            Log.i("deepu", "start: ${e.message}")
             e.printStackTrace()
         }
     }
 
     fun stop() {
+        isRunning = false
         serverSocket?.close()
+        serverSocket = null
         println("TCP Server stopped")
     }
 
