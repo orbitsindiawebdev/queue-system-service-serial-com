@@ -26,60 +26,84 @@ import java.net.Socket
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
 import kotlin.experimental.xor
 import kotlin.random.Random
 
 class TCPServer(private val port: Int, private val messageListener: MessageListener, private val context: Context) {
 
     private var serverSocket: ServerSocket? = null
-    private val clients = HashMap<String, ClientHandler>()
+    private val clients = ConcurrentHashMap<String, ClientHandler>()
     private val connectedClientsList = MutableLiveData<List<String>>()
     var arrListClients = ArrayList<String>()
     var arrListMasterDisplays = ArrayList<String>()
     var masterDisplay = 1
     @Volatile private var isRunning = false
+    private var serverThread: Thread? = null
 
     init {
         connectedClientsList.value = emptyList()
     }
 
     fun start() {
-        try {
-            serverSocket = ServerSocket(port)
-//            serverSocket?.reuseAddress = true
-//            serverSocket!!.bind(InetSocketAddress(port))
-            isRunning = true
+        if (isRunning) return
 
-            while (isRunning) {
-                while (true) {
-                    val clientSocket = serverSocket?.accept()
+        isRunning = true
+
+        serverThread = Thread {
+            try {
+                // Bind to ALL interfaces (IMPORTANT)
+                serverSocket = ServerSocket()
+                serverSocket!!.reuseAddress = true
+                serverSocket!!.bind(InetSocketAddress("0.0.0.0", port))
+
+                Log.i("TCPServer", "Server started on port $port")
+
+                while (isRunning) {
+                    val clientSocket = serverSocket!!.accept()
                     val clientHandler = ClientHandler(clientSocket)
-                    println("Client connected: ${clientSocket?.inetAddress}")
-                    // Handle client connection on a new thread
-                    if (!clients.containsKey(clientHandler.clientId)) {
-                        Thread(clientHandler).start()
-                        // Add client to connectedClientsList
 
-                    } else {
-                        println("Client ${clientHandler.clientId} is already connected.")
-                        // Optionally, you can notify or handle this scenario accordingly
+                    val clientId = clientHandler.clientId
+                    if (clients.containsKey(clientId)) {
+                        Log.w("TCPServer", "Client already connected: $clientId")
+                        clientSocket.close()
+                        continue
                     }
+
+                    clients[clientId] = clientHandler
+                    Thread(clientHandler).start()
+
+                    Log.i("TCPServer", "Client connected: ${clientSocket.inetAddress.hostAddress}")
                 }
+
+            } catch (e: Exception) {
+                if (isRunning) {
+                    Log.e("TCPServer", "Server error", e)
+                }
+            } finally {
+                stop()
             }
-            println("TCP Server started on port $port")
-
-        } catch (e: Exception) {
-            Log.i("deepu", "start: ${e.message}")
-            e.printStackTrace()
         }
-    }
 
+        serverThread!!.start()
+
+    }
     fun stop() {
         isRunning = false
-        serverSocket?.close()
+
+        try {
+            clients.values.forEach { it.close() } //doubt
+            clients.clear()
+            serverSocket?.close()
+        } catch (e: Exception) {
+            Log.e("TCPServer", "Error stopping server", e)
+        }
+
         serverSocket = null
-        println("TCP Server stopped")
+        serverThread = null
+        Log.i("TCPServer", "Server stopped")
     }
+
 
 
     /*------------------------------------------------All Functions-----------------------------------------------------------------*/
@@ -467,9 +491,17 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
+                finally {
+                    close()
+                }
             }
         }
 
+        fun close() {
+            try {
+                clientSocket?.close()
+            } catch (_: Exception) {}
+        }
         // generating master display id randomly
 
         fun generateCustomMasterId(): String {

@@ -464,7 +464,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         else {
             println("here is transaction with service id ${json.get("serviceId")?.asString ?: ""}")
             println("here is transaction with with all status  ${getAllTransactionFromDB()}")
-            println("here is transaction with status 1 in dislpay  ${getTransactionFromDbWithCalledStatus(json.get("serviceId")?.asString ?: "")}")
+            println("here is transaction with status 1 in display  ${getTransactionFromDbWithCalledStatus(json.get("serviceId")?.asString ?: "")}")
 
             val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "") // counter model to check service which is assigned to that counter
             val sentModel = getTransactionFromDbWithCalledStatus(counterModel?.serviceId)
@@ -605,9 +605,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                     val issueModel = getTransactionFromDbWithCalledStatus(counterModel?.serviceId ?: "")
                     Log.i("deepu", "manageKeypadData: $issueModel")
+                    val model =  json.getAsJsonObject("currentToken")
                     val changedModel = TransactionListDataModel(
                         id = issueModel?.id.asString(),
-                        counterId = issueModel?.counterId,
+                        counterId = json.get("counterId")?.asString ?: "",
                         serviceId = issueModel?.serviceId,
                         entityID = issueModel?.entityID,
                         serviceAssign = issueModel?.serviceAssign,
@@ -615,13 +616,17 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         ticketToken = issueModel?.ticketToken,
                         keypadToken = issueModel?.keypadToken,
                         issueTime = issueModel?.issueTime,
-                        startKeypadTime = json.get("startKeypadTime")?.asString ?: "",
-                        endKeypadTime = json.get("endKeypadTime")?.asString ?: "",
+                        startKeypadTime = model.get("startKeypadTime")?.asString ?: "",
+                        endKeypadTime = model.get("endKeypadTime")?.asString ?: "",
                         status = "2"
 
                     )
-                    val changedDbModel = parseInTransactionDbModel(changedModel, changedModel.id ?: "")
-                    addTransactionInDB(changedDbModel)
+                    if(issueModel!=null) {
+                        Log.i("deepu", "manageKeypadData:- $issueModel ${changedModel}")
+                        val changedDbModel =
+                            parseInTransactionDbModel(changedModel, changedModel.id ?: "")
+                        addTransactionInDB(changedDbModel)
+                    }
 
                     handler(500){
                         println("here is arrlist Display $arrListDisplays")
@@ -756,7 +761,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         sendDisplayData(
                             json = json,
                             counterModel = counterModel,
-                            sentModel = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
+                            sentModel = jsonObjectTransactionListDataModel
                         )
 
                        /* val token = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)?.token

@@ -27,7 +27,7 @@ interface TransactionDao {
         endKeypadTime: String?,
     )
 
-    @Query("SELECT * FROM TransactionDataDbModel WHERE token = :token AND serviceId = :serviceId  LIMIT 1")
+    @Query("SELECT * FROM TransactionDataDbModel WHERE token = :token AND serviceId = :serviceId ORDER BY issueTime DESC LIMIT 1")
     fun getTransactionByToken(token: String,serviceId: String): TransactionDataDbModel?
 
     @Query("SELECT * FROM TransactionDataDbModel WHERE serviceId = :serviceId")
