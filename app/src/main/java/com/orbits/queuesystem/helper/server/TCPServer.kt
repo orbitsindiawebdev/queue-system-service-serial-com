@@ -53,9 +53,9 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         serverThread = Thread {
             try {
                 // Bind to ALL interfaces (IMPORTANT)
-                serverSocket = ServerSocket()
-                serverSocket!!.reuseAddress = true
-                serverSocket!!.bind(InetSocketAddress("0.0.0.0", port))
+                serverSocket = ServerSocket(port)
+//                serverSocket!!.reuseAddress = true
+//                serverSocket!!.bind(InetSocketAddress("0.0.0.0", port))
 
                 Log.i("TCPServer", "Server started on port $port")
 
@@ -66,22 +66,22 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                     val clientId = clientHandler.clientId
                     if (clients.containsKey(clientId)) {
                         Log.w("TCPServer", "Client already connected: $clientId")
-                        clientSocket.close()
+//                        clientSocket.close()
                         continue
                     }
 
-                    clients[clientId] = clientHandler
+//                    clients[clientId] = clientHandler
                     Thread(clientHandler).start()
 
                     Log.i("TCPServer", "Client connected: ${clientSocket.inetAddress.hostAddress}")
                 }
 
             } catch (e: Exception) {
-                if (isRunning) {
+//                if (isRunning) {
                     Log.e("TCPServer", "Server error", e)
-                }
+//                }
             } finally {
-                stop()
+//                stop()
             }
         }
 
@@ -91,13 +91,13 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     fun stop() {
         isRunning = false
 
-        try {
-            clients.values.forEach { it.close() } //doubt
-            clients.clear()
+//        try {
+//            clients.values.forEach { it.close() } //doubt
+//            clients.clear()
             serverSocket?.close()
-        } catch (e: Exception) {
-            Log.e("TCPServer", "Error stopping server", e)
-        }
+//        } catch (e: Exception) {
+//            Log.e("TCPServer", "Error stopping server", e)
+//        }
 
         serverSocket = null
         serverThread = null
@@ -491,9 +491,9 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
-                finally {
-                    close()
-                }
+//                finally {
+//                    close()
+//                }
             }
         }
 

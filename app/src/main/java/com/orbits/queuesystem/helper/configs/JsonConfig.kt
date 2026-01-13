@@ -1,6 +1,7 @@
 package com.orbits.queuesystem.helper.configs
 
 import android.content.Context
+import android.util.Log
 import com.google.gson.Gson
 import com.google.gson.JsonArray
 import com.google.gson.JsonObject
@@ -108,7 +109,7 @@ object JsonConfig {
 
     fun Context.createTransactionsJsonData(transactions: ArrayList<TransactionDataDbModel?>?): JsonObject {
         val transactionCount = transactions?.size ?: 0
-
+        Log.i("deepuyadav", "createTransactionsJsonData: $transactions")
         return JsonObject().apply {
             addProperty("transactionCount", transactionCount) // Add the size as a property
         }

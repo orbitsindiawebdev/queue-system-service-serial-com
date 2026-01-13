@@ -13,7 +13,7 @@ interface TransactionDao {
 
     @Query(
         "UPDATE TransactionDataDbModel" +
-                " SET token =:token, status=:status ,startKeypadTime=:startKeypadTime,endKeypadTime=:endKeypadTime ,issueTime =:issueTime, counterId =:counterId, counterType =:counterType" +
+                " SET token =:token, status=:status ,startKeypadTime=:startKeypadTime,endKeypadTime=:endKeypadTime, counterId =:counterId, counterType =:counterType" +
                 " WHERE id =:id"
     )
     fun updateTransactionOffline(
@@ -23,7 +23,6 @@ interface TransactionDao {
         counterId: String?,
         counterType: String?,
         startKeypadTime: String?,
-        issueTime: String?,
         endKeypadTime: String?,
     )
 
@@ -43,6 +42,9 @@ interface TransactionDao {
     @Query("SELECT * FROM TransactionDataDbModel WHERE status = 0 AND serviceId = :serviceId ORDER BY issueTime LIMIT 1")
     fun getTransactionByIssuedStatus(serviceId:String): TransactionDataDbModel?
 
+    @Query("SELECT * FROM TransactionDataDbModel WHERE status = 0 AND counterId = :counterId ORDER BY issueTime LIMIT 1")
+    fun getTransactionByCounter(counterId:String?): TransactionDataDbModel?
+
     @Query("SELECT * FROM TransactionDataDbModel WHERE status = 1 AND serviceId = :serviceId ORDER BY issueTime LIMIT 1")
     fun getTransactionByCalledStatus(serviceId:String): TransactionDataDbModel?
 
@@ -50,8 +52,8 @@ interface TransactionDao {
     fun getTransactionByDisplayStatus(serviceId:String): TransactionDataDbModel?
 
 
-    @Query("SELECT * FROM TransactionDataDbModel WHERE status = 1 AND serviceId = :serviceId ORDER BY issueTime DESC LIMIT 1")
-    fun getLastTransactionByStatusOne(serviceId: String): TransactionDataDbModel?
+    @Query("SELECT * FROM TransactionDataDbModel WHERE status = 1 AND counterId = :counterId ORDER BY issueTime DESC LIMIT 1")
+    fun getLastTransactionByStatusOne(counterId: String): TransactionDataDbModel?
 
 
 
@@ -73,6 +75,9 @@ interface TransactionDao {
 
     @Query("SELECT * FROM TransactionDataDbModel WHERE status = 0 AND serviceId = :serviceId ")
     fun getAllTransactionCount(serviceId: String): List<TransactionDataDbModel?>
+
+    @Query("SELECT * FROM TransactionDataDbModel WHERE status = 0 AND counterId = :counterId ")
+    fun getAllTransactionCountCounter(counterId: String?): List<TransactionDataDbModel?>
 
 
 }

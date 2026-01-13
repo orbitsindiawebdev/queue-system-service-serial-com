@@ -65,6 +65,7 @@ import com.orbits.queuesystem.helper.database.LocalDB.getRequiredTransactionWith
 import com.orbits.queuesystem.helper.database.LocalDB.getResetData
 import com.orbits.queuesystem.helper.database.LocalDB.getServiceById
 import com.orbits.queuesystem.helper.database.LocalDB.getTransactionByToken
+import com.orbits.queuesystem.helper.database.LocalDB.getTransactionFromDbCounterWise
 import com.orbits.queuesystem.helper.database.LocalDB.getTransactionFromDbWithCalledStatus
 import com.orbits.queuesystem.helper.database.LocalDB.isCounterAssigned
 import com.orbits.queuesystem.helper.database.LocalDB.isResetDoneInDb
@@ -403,7 +404,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     }
 
     private fun manageCounterDisplayData(json: JsonObject){
-        println("THIS IS DISPLAY TYPE MODULE ::")
+        println("THIS IS DISPLAY TYPE MODULE :: $json")
         if (json.has(Constants.TRANSACTION)) {
             val model =  json.getAsJsonObject("transaction")
             serviceId = model?.get("serviceId")?.asString ?: ""
@@ -426,7 +427,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                 )
 
-
+//                {"keypadCounterType":"Counter 1","counterId":"1","message":"ConnectionWithDisplay","serviceId":"1","displayId":"D2"}
                 sendMessageToWebSocketClient(
                     model?.get("displayId")?.asString ?: "",
                     createServiceJsonDataWithTransaction(
@@ -463,11 +464,11 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
         else {
             println("here is transaction with service id ${json.get("serviceId")?.asString ?: ""}")
-            println("here is transaction with with all status  ${getAllTransactionFromDB()}")
+//            println("here is transaction with with all status  ${getAllTransactionFromDB()}")
             println("here is transaction with status 1 in display  ${getTransactionFromDbWithCalledStatus(json.get("serviceId")?.asString ?: "")}")
 
             val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "") // counter model to check service which is assigned to that counter
-            val sentModel = getTransactionFromDbWithCalledStatus(counterModel?.serviceId)
+            val sentModel = getLastTransactionFromDbWithStatusOne(counterModel?.counterId)
 
             println("here is id ::::: ${json.get("serviceId")?.asString ?: ""}")
             var isDbUpdated = false
@@ -477,8 +478,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                 createServiceJsonDataWithTransaction(
                     sentModel ?: TransactionListDataModel(
-                            id = "",
-                            counterId = "",
+                            id = "0",
+                            counterId = counterModel?.counterId,
                             serviceId = json.get("serviceId")?.asString ?: "",
                             entityID = "",
                             serviceAssign = json.get("counterType")?.asString ?: "",
@@ -542,6 +543,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 var isDbUpdated = false
 
                 if ((getTransactionFromDbWithIssuedStatus(counterModel?.serviceId) != null)){
+                    updateCounter(counterModel?.serviceId, counterModel?.counterId, getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
                     println("here is status of transaction ${model.get("status")?.asString}")
                     sendMessageToWebSocketClientWith(
                         json.get("counterId")?.asString ?: "",
@@ -555,7 +557,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             sendDisplayData(
                                 json = json,
                                 counterModel = counterModel,
-                                sentModel = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
+                                sentModel = getTransactionFromDbCounterWise(counterModel?.counterId)
 
                             )
 
@@ -565,11 +567,26 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                             if (!isDbUpdated){
                                 Log.i("deepu", "manageKeypadData: 0 ${counterModel?.serviceId}")
-                                updateDb(getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
+                                updateDb(counterModel?.serviceId, counterModel?.counterId, getTransactionFromDbWithIssuedStatus(counterModel?.serviceId))
 
                                 isDbUpdated = true
                             }
 
+                            sendMessageToWebSocketClientWith(
+                                json.get("counterId")?.asString ?: "",
+                                createReconnectionJsonDataWithTransaction(),
+                                onSuccess = {
+                                    sendMessageToWebSocketClient(
+                                        json.get("counterId")?.asString ?: "",
+                                        createTransactionsJsonData(
+                                            getAllTransactionCount(counterModel?.serviceId ?: "")
+                                        )
+                                    )
+                                },
+                                onFailure = { e ->
+                                    // Handle failure, such as logging or notifying the user
+                                }
+                            )
                         },
                         onFailure = {}
 
@@ -577,6 +594,27 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
 
                 }else {
+                    val transModel=TransactionDataDbModel(
+                        id = 0,
+                        counterId = json.get("counterId")?.asString ?:"",
+                        serviceId = json.get("serviceId")?.asString ?: serviceId,
+                        entityID = "",
+                        counterType = json.get("counterId")?.asString ?:"",
+                        serviceAssign = json.get("serviceType")?.asString,
+                        token = "00",
+                        ticketToken = null,
+                        keypadToken = "00",
+                        issueTime = getCurrentTimeFormatted(),
+                        startKeypadTime = getCurrentTimeFormatted(),
+                        endKeypadTime = getCurrentTimeFormatted(),
+                        status = "0"
+                    )
+                    sendDisplayData(
+                        json = json,
+                        counterModel = counterModel,
+                        sentModel = transModel
+
+                    )
                     // no tokens with status 0 available in table
                     sendMessageToWebSocketClient(
                         json.get("counterId")?.asString ?: "",
@@ -589,7 +627,63 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         }
         else {
             // this is process for token call out feature
-            if (json.has("tokenNo")){
+            if(json.has("keypadLogOut")){
+                val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "")
+
+                val issueModel = getLastTransactionFromDbWithStatusOne(counterModel?.counterId ?: "")
+                Log.i("deepu", "manageKeypadData: $issueModel")
+                val model =  json.getAsJsonObject("currentToken")
+                val changedModel = TransactionListDataModel(
+                    id = issueModel?.id.asString(),
+                    counterId = json.get("counterId")?.asString ?: "",
+                    serviceId = issueModel?.serviceId,
+                    entityID = issueModel?.entityID,
+                    serviceAssign = issueModel?.serviceAssign,
+                    token = issueModel?.token,
+                    ticketToken = issueModel?.ticketToken,
+                    keypadToken = issueModel?.keypadToken,
+                    issueTime = issueModel?.issueTime,
+                    startKeypadTime = model.get("startKeypadTime")?.asString ?: "",
+                    endKeypadTime = model.get("endKeypadTime")?.asString ?: "",
+                    status = "2"
+
+                )
+                if(issueModel!=null) {
+                    Log.i("deepu", "manageKeypadData:- $issueModel ${changedModel}")
+                    val changedDbModel =
+                        parseInTransactionDbModel(changedModel, changedModel.id ?: "")
+                    addTransactionInDB(changedDbModel)
+                }
+
+                handler(500){
+                    println("here is arrlist Display $arrListDisplays")
+                    val transModel=TransactionDataDbModel(
+                        id = 0,
+                        counterId = json.get("counterId")?.asString ?:"",
+                        serviceId = json.get("serviceId")?.asString ?: serviceId,
+                        entityID = "",
+                        counterType = json.get("counterId")?.asString ?:"",
+                        serviceAssign = json.get("serviceType")?.asString,
+                        token = "00",
+                        ticketToken = null,
+                        keypadToken = "00",
+                        issueTime = getCurrentTimeFormatted(),
+                        startKeypadTime = getCurrentTimeFormatted(),
+                        endKeypadTime = getCurrentTimeFormatted(),
+                        status = "0"
+                    )
+                    sendDisplayData(
+                        json = json,
+                        counterModel = counterModel,
+                        sentModel = transModel
+
+                    )
+
+                }
+
+            }
+
+            else if (json.has("tokenNo")){
                 val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "")
                 var isDbUpdated = false
 
@@ -603,12 +697,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         )
                     )
 
-                    val issueModel = getTransactionFromDbWithCalledStatus(counterModel?.serviceId ?: "")
+                    val issueModel = getLastTransactionFromDbWithStatusOne(counterModel?.counterId ?: "")
                     Log.i("deepu", "manageKeypadData: $issueModel")
                     val model =  json.getAsJsonObject("currentToken")
                     val changedModel = TransactionListDataModel(
                         id = issueModel?.id.asString(),
-                        counterId = json.get("counterId")?.asString ?: "",
+                        counterId = json.get("counterId")?.asString ?: counterModel?.counterId,
                         serviceId = issueModel?.serviceId,
                         entityID = issueModel?.entityID,
                         serviceAssign = issueModel?.serviceAssign,
@@ -631,12 +725,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     handler(500){
                         println("here is arrlist Display $arrListDisplays")
 
-                        sendDisplayData(
-                            json = json,
-                            counterModel = counterModel,
-                            sentModel = getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: "")
 
-                        )
 
                         val token = getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: "")?.token
                         Log.i("deepu", "manageKeypadData:0 $token $counterModel")
@@ -644,11 +733,16 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                         if (!isDbUpdated){
                             Log.i("deepu", "manageKeypadData: 1 ${json.get("tokenNo")?.asString} ${counterModel?.serviceId}")
-                            updateDb(getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: ""))
+                            updateDb(counterModel?.serviceId, counterModel?.counterId, getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: ""))
 
                             isDbUpdated = true
                         }
+                        sendDisplayData(
+                            json = json,
+                            counterModel = counterModel,
+                            sentModel = getTransactionByToken(json.get("tokenNo")?.asString ?: "",counterModel?.serviceId ?: "")
 
+                        )
                     }
                 }
 
@@ -686,7 +780,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
                         if (!isDbUpdated){
                             Log.i("deepu", "manageKeypadData: 2 ${json.get("repeatToken")?.asString} ${counterModel?.serviceId}")
-                            updateDb(getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: ""))
+                            updateDb(counterModel?.serviceId, counterModel?.counterId, getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: ""))
 
                             isDbUpdated = true
                         }
@@ -727,13 +821,11 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "")
                 var isDbUpdated = false  // Flag to ensure the database is updated only once
 
-                val jsonObjectTransactionListDataModel =
-                    if (getLastTransactionFromDbWithStatusOne(counterModel?.serviceId) != null){
-                        getLastTransactionFromDbWithStatusOne(counterModel?.serviceId)
+                var jsonObjectTransactionListDataModel =
+                    if (getLastTransactionFromDbWithStatusOne(counterModel?.counterId) != null){
+                        getLastTransactionFromDbWithStatusOne(counterModel?.counterId)
                     }
-                    else if (getTransactionFromDbWithIssuedStatus(counterModel?.serviceId) != null){
-                            getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)
-                    }else {
+                    else {
                             null
                         }
 
@@ -757,7 +849,31 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     onSuccess = {
 
                         println("here is arrlist Display $arrListDisplays")
+                        if(jsonObjectTransactionListDataModel==null){
+                            jsonObjectTransactionListDataModel = TransactionDataDbModel(
+                                id = 0,
+                                counterId = json.get("counterId")?.asString ?: counterModel?.counterId ?: "",
+                                serviceId = json.get("serviceId")?.asString ?: serviceId,
+                                entityID = "",
+                                counterType = json.get("counterId")?.asString ?: counterModel?.counterId ?: "",
+                                serviceAssign = json.get("serviceType")?.asString,
+                                token = "00",
+                                ticketToken = null,
+                                keypadToken = "00",
+                                issueTime = getCurrentTimeFormatted(),
+                                startKeypadTime = getCurrentTimeFormatted(),
+                                endKeypadTime = getCurrentTimeFormatted(),
+                                status = "0"
+                            )
+                        }
+                        else{
+                            if (!isDbUpdated){
+                                Log.i("deepu", "manageKeypadData: 3 ${jsonObjectTransactionListDataModel}")
+                                updateDb(counterModel?.serviceId, counterModel?.counterId, jsonObjectTransactionListDataModel)
 
+                                isDbUpdated = true
+                            }
+                        }
                         sendDisplayData(
                             json = json,
                             counterModel = counterModel,
@@ -767,12 +883,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                        /* val token = getTransactionFromDbWithIssuedStatus(counterModel?.serviceId)?.token
                         callTokens(token ?: "", counterModel)*/
 
-                        if (!isDbUpdated){
-                            Log.i("deepu", "manageKeypadData: 3 ${jsonObjectTransactionListDataModel}")
-                            updateDb(jsonObjectTransactionListDataModel)
 
-                            isDbUpdated = true
-                        }
 
                     },
                     onFailure = {  }
@@ -783,10 +894,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         }
     }
 
-    private fun updateDb(sentModel: TransactionDataDbModel?){
+
+
+    private fun updateDb(serviceId: String?, counterId: String?, sentModel: TransactionDataDbModel?){
         val changedDisplayModel = TransactionListDataModel(
             id = sentModel?.id.asString(),
-            counterId = sentModel?.counterId,
+            counterId = counterId,
             serviceId = sentModel?.serviceId,
             entityID = sentModel?.entityID,
             serviceAssign = sentModel?.serviceAssign,
@@ -809,6 +922,30 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
     }
 
+    private fun updateCounter(serviceId: String?, counterId: String?,sentModel: TransactionDataDbModel?){
+        val changedDisplayModel = TransactionListDataModel(
+            id = sentModel?.id.asString(),
+            counterId = counterId,
+            serviceId = sentModel?.serviceId,
+            entityID = sentModel?.entityID,
+            serviceAssign = sentModel?.serviceAssign,
+            token = sentModel?.token,
+            ticketToken = sentModel?.ticketToken,
+            keypadToken = sentModel?.keypadToken,
+            issueTime = sentModel?.issueTime,
+            status = "0"
+        )
+
+        if(sentModel!=null){
+            val changedDisplayDbModel = parseInTransactionDbModel(changedDisplayModel, changedDisplayModel.id ?: "")
+            println("Here is the changed transactions model: $changedDisplayDbModel")
+
+            // Update the database
+            addTransactionInDB(changedDisplayDbModel)
+        }
+
+    }
+
     private fun manageTicketData(json: JsonObject){
         println("THIS IS TICKET TYPE MODULE :: ")
         if (json.has(Constants.SERVICE_TYPE)) {
@@ -818,7 +955,6 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             val service = getServiceById(serviceId.asInt())
             if (serviceId.isNotEmpty() && isCounterAssigned(serviceId)) {
                 val model = TransactionListDataModel(
-                    counterId = getCounterIdForService(serviceId),
                     serviceId = serviceId,
                     entityID = serviceId,
                     serviceAssign = serviceType,
@@ -968,7 +1104,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
 
     // This Function is used to send data's to displays connected to keypad when token is callout or next button pressed on keypad
-    private fun sendDisplayData(json: JsonObject,counterModel: CounterDataDbModel?,sentModel: TransactionDataDbModel?){
+    private fun sendDisplayData(json: JsonObject,counterModel: CounterDataDbModel?, sentModel: TransactionDataDbModel?){
         if (arrListDisplays.isNotEmpty()) {
             println("here is display list  $arrListDisplays")
 
