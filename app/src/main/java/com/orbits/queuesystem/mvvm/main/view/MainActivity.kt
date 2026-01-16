@@ -103,7 +103,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     private lateinit var socket: Socket
     private var outStream: OutputStream? = null
     private val arrListClients = CopyOnWriteArrayList<String>()
-    private var arrListDisplays = ArrayList<DisplayListDataModel?>()
+    // Use CopyOnWriteArrayList for thread-safe display list operations
+    private var arrListDisplays = CopyOnWriteArrayList<DisplayListDataModel?>()
 
 
     /*----------------------------------------- TCP server variables -----------------------------------------*/
@@ -439,18 +440,25 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         }
 
         else if (json.has("Reconnection")) {
+            val displayId = json.get("displayId")?.asString ?: ""
+            val counterId = json.get("counterId")?.asString ?: ""
+            val serviceIdVal = json.get("serviceId")?.asString ?: ""
+
             sendMessageToWebSocketClientWith(
-                json.get("displayId")?.asString ?: "",
+                displayId,
                 createReconnectionJsonDataWithTransaction(),
                 onSuccess = {
-                    val model = DisplayListDataModel(
-                        id = json.get("displayId")?.asString ?: "",
-                        counterId = json.get("counterId")?.asString ?: "",
-                        serviceId = json.get("serviceId")?.asString ?: ""
+                    // Remove any existing entry with same displayId to prevent duplicates
+                    arrListDisplays.removeAll { it?.id == displayId }
 
+                    val model = DisplayListDataModel(
+                        id = displayId,
+                        counterId = counterId,
+                        serviceId = serviceIdVal
                     )
 
                     arrListDisplays.add(model)
+                    println("Display registered (Reconnection): id=$displayId, counterId=$counterId, total displays=${arrListDisplays.size}")
                 },
                 onFailure = { e ->
                     println("Error: ${e.message}")
@@ -467,20 +475,24 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 //            println("here is transaction with with all status  ${getAllTransactionFromDB()}")
             println("here is transaction with status 1 in display  ${getTransactionFromDbWithCalledStatus(json.get("serviceId")?.asString ?: "")}")
 
-            val counterModel = getCounterFromDB(json.get("counterId")?.asString ?: "") // counter model to check service which is assigned to that counter
+            val displayId = json.get("displayId")?.asString ?: ""
+            val counterId = json.get("counterId")?.asString ?: ""
+            val serviceIdVal = json.get("serviceId")?.asString ?: ""
+
+            val counterModel = getCounterFromDB(counterId) // counter model to check service which is assigned to that counter
             val sentModel = getLastTransactionFromDbWithStatusOne(counterModel?.counterId)
 
-            println("here is id ::::: ${json.get("serviceId")?.asString ?: ""}")
+            println("here is id ::::: $serviceIdVal")
             var isDbUpdated = false
 
             sendMessageToWebSocketClientWith(
-                json.get("displayId")?.asString ?: "",
+                displayId,
 
                 createServiceJsonDataWithTransaction(
                     sentModel ?: TransactionListDataModel(
                             id = "0",
                             counterId = counterModel?.counterId,
-                            serviceId = json.get("serviceId")?.asString ?: "",
+                            serviceId = serviceIdVal,
                             entityID = "",
                             serviceAssign = json.get("counterType")?.asString ?: "",
                             token = "000",
@@ -489,15 +501,17 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         )
                 ),
                 onSuccess = {
+                    // Remove any existing entry with same displayId to prevent duplicates
+                    arrListDisplays.removeAll { it?.id == displayId }
 
                     val model = DisplayListDataModel(
-                        id = json.get("displayId")?.asString ?: "",
-                        counterId = json.get("counterId")?.asString ?: "",
-                        serviceId = json.get("serviceId")?.asString ?: ""
-
+                        id = displayId,
+                        counterId = counterId,
+                        serviceId = serviceIdVal
                     )
 
                     arrListDisplays.add(model)
+                    println("Display registered: id=$displayId, counterId=$counterId, total displays=${arrListDisplays.size}")
                 },
                 onFailure = { e ->
                     println("Error: ${e.message}")
@@ -1013,8 +1027,15 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         }.start()
     }
 
-    override fun onClientDisconnected() {
-
+    override fun onClientDisconnected(clientId: String?) {
+        // Remove disconnected display from the list to prevent stale entries
+        if (!clientId.isNullOrEmpty()) {
+            val removedCount = arrListDisplays.count { it?.id == clientId }
+            arrListDisplays.removeAll { it?.id == clientId }
+            if (removedCount > 0) {
+                println("onClientDisconnected: Removed display id=$clientId, remaining displays=${arrListDisplays.size}")
+            }
+        }
     }
 
     private fun sendMessageToWebSocketClient(clientId: String, jsonObject: JsonObject) {
@@ -1106,23 +1127,30 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     // This Function is used to send data's to displays connected to keypad when token is callout or next button pressed on keypad
     private fun sendDisplayData(json: JsonObject,counterModel: CounterDataDbModel?, sentModel: TransactionDataDbModel?){
         if (arrListDisplays.isNotEmpty()) {
-            println("here is display list  $arrListDisplays")
-
             val targetCounterId = json.get("counterId")?.asString ?: ""
 
-            val matchFound = arrListDisplays.any { it?.counterId == targetCounterId }
+            println("sendDisplayData: Looking for displays with counterId=$targetCounterId")
+            println("sendDisplayData: Total registered displays=${arrListDisplays.size}")
+            arrListDisplays.forEach { display ->
+                println("sendDisplayData: Registered display - id=${display?.id}, counterId=${display?.counterId}")
+            }
 
-            if (matchFound) {
-                // Retrieve the matching item
-                val matchingItem = arrListDisplays.filter { it?.counterId == targetCounterId }
+            // Filter displays matching the target counter
+            val matchingDisplays = arrListDisplays.filter { it?.counterId == targetCounterId }
 
-                println("here is sentModel 111  $sentModel")
+            if (matchingDisplays.isNotEmpty()) {
+                println("sendDisplayData: Found ${matchingDisplays.size} display(s) for counterId=$targetCounterId")
+                println("sendDisplayData: Token to send = ${sentModel?.token}")
 
-                matchingItem.forEach {
+                matchingDisplays.forEach { display ->
+                    val displayId = display?.id ?: ""
+                    println("sendDisplayData: Sending token to display id=$displayId")
+
                     sendMessageToWebSocketClientWith(
-                        it?.id ?: "",
+                        displayId,
                         createServiceJsonDataWithTransaction(sentModel),
                         onSuccess = {
+                            println("sendDisplayData: Successfully sent token to display id=$displayId")
                             if (tcpServer?.arrListMasterDisplays?.isNotEmpty() == true){
                                 sendMessageToWebSocketClient(
                                     tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "",
@@ -1133,13 +1161,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             }
                         },
                         onFailure = { e ->
-                            println("Error: ${e.message}")
-                            // Handle failure, such as logging or notifying the user
+                            println("sendDisplayData: Failed to send to display id=$displayId, error=${e.message}")
+                            // Remove disconnected display from the list
+                            arrListDisplays.removeAll { it?.id == displayId }
+                            println("sendDisplayData: Removed disconnected display, remaining=${arrListDisplays.size}")
                         }
                     )
                 }
-
+            } else {
+                println("sendDisplayData: No displays found for counterId=$targetCounterId")
             }
+        } else {
+            println("sendDisplayData: No displays registered yet")
         }
     }
 

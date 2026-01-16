@@ -7,5 +7,5 @@ interface MessageListener {
     fun onMessageReceived(message: String)
     fun onMessageJsonReceived(json: JsonObject)
     fun onClientConnected(clientSocket: Socket?,clientList: List<String?>)
-    fun onClientDisconnected()
+    fun onClientDisconnected(clientId: String?)
 }

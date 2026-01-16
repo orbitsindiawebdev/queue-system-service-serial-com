@@ -487,7 +487,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                     clients.remove(clientId)
                     removeFromConnectedClients(clientId ?: "")
                     println("Client disconnected: $clientId")
-                    messageListener.onClientDisconnected()
+                    messageListener.onClientDisconnected(clientId)
                 } catch (e: Exception) {
                     e.printStackTrace()
                 }
