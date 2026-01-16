@@ -382,10 +382,17 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         }
 
                     }
-                    // For Username related for soft keypad
+                    // For Username related for soft keypad - only send response to the requesting client
                     json.has(Constants.USERNAME) -> {
-                        arrListClients.forEach {
-                            sendMessageToWebSocketClient(it ?: "", createUserJsonData(json.get("userName").asString))
+                        // Only send login response to the client that made the request (last connected client)
+                        val requestingClientId = arrListClients.lastOrNull()
+                        val loginRequestId = json.get("loginRequestId")?.asString
+                        if (!requestingClientId.isNullOrEmpty()) {
+                            sendMessageToWebSocketClient(
+                                requestingClientId,
+                                createUserJsonData(json.get("userName").asString, loginRequestId)
+                            )
+                            println("Login response sent only to requesting client: $requestingClientId with requestId: $loginRequestId")
                         }
                     }
                     // For Window Display Connection

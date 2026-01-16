@@ -157,13 +157,17 @@ object JsonConfig {
     }
 
 
-    fun Context.createUserJsonData(userName:String): JsonObject {
+    fun Context.createUserJsonData(userName: String, loginRequestId: String? = null): JsonObject {
         val model = getAllUserFromDB()?.find { it?.userName == userName }
         println("here is recorded user $model")
         return JsonObject().apply {
             addProperty("userName", model?.userName)
             addProperty("userId", model?.userId)
             addProperty("password", model?.password)
+            // Include the loginRequestId so the requesting client can verify this response is for them
+            if (!loginRequestId.isNullOrEmpty()) {
+                addProperty("loginRequestId", loginRequestId)
+            }
         }
     }
 
