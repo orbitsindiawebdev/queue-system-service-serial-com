@@ -502,9 +502,9 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             serviceId = serviceIdVal,
                             entityID = "",
                             serviceAssign = json.get("counterType")?.asString ?: "",
-                            token = "000",
-                            ticketToken = "000",
-                            keypadToken = "000",
+                            token = "00",
+                            ticketToken = "00",
+                            keypadToken = "00",
                         )
                 ),
                 onSuccess = {
@@ -862,9 +862,9 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                                 serviceId = counterModel?.serviceId,
                                 entityID = "",
                                 serviceAssign = counterModel?.counterType,
-                                token = "000",
-                                ticketToken = "000",
-                                keypadToken = "000",
+                                token = "00",
+                                ticketToken = "00",
+                                keypadToken = "00",
                             )
                     ),
                     onSuccess = {
