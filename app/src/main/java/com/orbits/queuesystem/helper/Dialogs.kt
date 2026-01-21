@@ -6,6 +6,7 @@ import android.content.Context
 import android.graphics.Color
 import android.graphics.drawable.ColorDrawable
 import android.text.method.PasswordTransformationMethod
+import android.util.Log
 import android.view.Gravity
 import android.view.LayoutInflater
 import android.view.View
@@ -151,7 +152,8 @@ object Dialogs {
         alertDialogInterface: AlertDialogInterface,
     ) {
         try {
-            var serviceId = ""
+            // Initialize serviceId with existing value when editing
+            var serviceId = editCounterModel?.serviceId ?: ""
             addCounterDialog = Dialog(activity)
             addCounterDialog?.requestWindowFeature(Window.FEATURE_NO_TITLE)
             addCounterDialog?.window?.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
@@ -216,6 +218,7 @@ object Dialogs {
                     }
                     else -> {
                         addCounterDialog?.dismiss()
+                        Log.i("deepu", "showAddCounterDialog: $editCounterModel")
                         if (editCounterModel != null){
                             alertDialogInterface.onUpdateCounter(
                                 model = CounterListDataModel(

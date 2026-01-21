@@ -93,6 +93,11 @@ import java.util.concurrent.CopyOnWriteArrayList
 
 class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListener {
 
+    companion object {
+        // Shared client list accessible from other activities
+        val arrListClients = CopyOnWriteArrayList<String>()
+    }
+
     private lateinit var binding: ActivityMainBinding
     private var adapter = ServiceListAdapter()
     private var arrListService = ArrayList<ServiceListDataModel?>()
@@ -102,7 +107,6 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     private var tcpServer: TCPServer? = null
     private lateinit var socket: Socket
     private var outStream: OutputStream? = null
-    private val arrListClients = CopyOnWriteArrayList<String>()
     // Use CopyOnWriteArrayList for thread-safe display list operations
     private var arrListDisplays = CopyOnWriteArrayList<DisplayListDataModel?>()
 
@@ -240,6 +244,9 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     when (type) {
                         Constants.TOOLBAR_ICON_ONE -> {
                             val intent = Intent(this@MainActivity, CounterListActivity::class.java)
+                            val passList = ArrayList(arrListClients);
+                            Log.i("deepika", "onToolBarListener: $arrListClients $passList")
+                            intent.putStringArrayListExtra("KEY_LIST_DATA", passList)
                             startActivity(intent)
                         }
                         Constants.TOOLBAR_ICON_MENU -> {
@@ -304,6 +311,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         arrListService.addAll(data)
         adapter.onClickEvent = object : CommonInterfaceClickEvent {
             override fun onItemClick(type: String, position: Int) {
+                Log.i("deepu", "setData11: $type $position")
                 if (type == "editService") {
                     Dialogs.showAddServiceDialog(
                         this@MainActivity,
@@ -332,6 +340,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     val dbModel = parseInServiceDbModel(model, model.serviceId ?: "")
                     addServiceInDB(dbModel)
                     setData(parseInServiceModelArraylist(getAllServiceFromDB()))
+                    println("deepu : $arrListClients ")
+                    arrListClients.forEach {
+                        sendMessageToWebSocketClient(it ?: "", createJsonData())
+                    }
                 }
             })
         }
@@ -352,7 +364,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 when {
                     // For Connection of every client
                     json.has(Constants.CONNECTION) -> {
-                        sendMessageToWebSocketClient(arrListClients.lastOrNull()?.toString() ?: "", createJsonData())
+                        val set = HashSet<String>(arrListClients)
+                        println("deepu0 : $set ")
+//                        sendMessageToWebSocketClient(arrListClients.lastOrNull()?.toString() ?: "", createJsonData())
+                        set.forEach {
+                            sendMessageToWebSocketClient(it ?: "", createJsonData())
+                        }
                     }
                     // For Ticket Dispenser
                     json.has(Constants.TICKET_TYPE) -> {
@@ -360,6 +377,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     }
                     // For Window Display Connection
                     json.has(Constants.DISPLAY_CONNECTION) -> {
+                        println("deepu1 : $arrListClients ")
                         sendMessageToWebSocketClient(arrListClients.lastOrNull()?.toString() ?: "", createDisplayJsonData(
                             "D${generateCustomId()}"
                         ))
@@ -370,7 +388,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             val serviceIds: List<String?>? = json.get("services")?.asString?.split(",")?.map { it.trim() }
                             println("here is data with ${getRequiredTransactionWithServiceFromDB(serviceIds)}")
                             println("here is serviceIds ${serviceIds}")
-
+                            println("deepu2 : $arrListClients ")
                             sendMessageToWebSocketClient(
                                 tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "",
                                 createMasterDisplayJsonData(
@@ -378,6 +396,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                                 )
                             )
                         }else {
+                            println("deepu3 : $arrListClients ")
                             sendMessageToWebSocketClient(tcpServer?.arrListMasterDisplays?.lastOrNull() ?: "", createJsonData())
                         }
 
@@ -388,6 +407,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         val requestingClientId = arrListClients.lastOrNull()
                         val loginRequestId = json.get("loginRequestId")?.asString
                         if (!requestingClientId.isNullOrEmpty()) {
+                            println("deepu4 : $arrListClients ")
                             sendMessageToWebSocketClient(
                                 requestingClientId,
                                 createUserJsonData(json.get("userName").asString, loginRequestId)
@@ -968,7 +988,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     }
 
     private fun manageTicketData(json: JsonObject){
-        println("THIS IS TICKET TYPE MODULE :: ")
+        println("THIS IS TICKET TYPE MODULE :: $json ")
         if (json.has(Constants.SERVICE_TYPE)) {
             serviceId = json.get("serviceId")?.asString ?: ""
             serviceType = json.get("serviceType")?.asString ?: ""
