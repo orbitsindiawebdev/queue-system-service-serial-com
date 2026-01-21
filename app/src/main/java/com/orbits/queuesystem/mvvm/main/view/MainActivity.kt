@@ -321,6 +321,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                             val dbModel = parseInServiceDbModel(model, model.serviceId ?: "")
                             addServiceInDB(dbModel) // Add service functions or update
                             setData(parseInServiceModelArraylist(getAllServiceFromDB())) // Add services in ui
+                            // Broadcast to all connected clients using WebSocketManager
+                            broadcastToAllClients(createJsonData())
                             println("here is all services ${getAllServiceFromDB()}")
                         }
                     })
@@ -340,10 +342,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     val dbModel = parseInServiceDbModel(model, model.serviceId ?: "")
                     addServiceInDB(dbModel)
                     setData(parseInServiceModelArraylist(getAllServiceFromDB()))
-                    println("deepu : $arrListClients ")
-                    arrListClients.forEach {
-                        sendMessageToWebSocketClient(it ?: "", createJsonData())
-                    }
+                    // Broadcast to all connected clients using WebSocketManager
+                    broadcastToAllClients(createJsonData())
                 }
             })
         }
@@ -853,6 +853,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     }
                 )
 
+                broadcastToAllClients(createJsonData())
+
             }
 
             else {
@@ -1043,9 +1045,17 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                 outStream = clientSocket?.getOutputStream()
                 if (clientSocket != null) {
                     socket = clientSocket
-                    arrListClients.clear()
-                    arrListClients.addAll(clientList)
-                    println("here is all list after client added $arrListClients")
+                    // Sync arrListClients with the server's client list
+                    // Use synchronized block to prevent concurrent modification
+                    synchronized(arrListClients) {
+                        arrListClients.clear()
+                        clientList.filterNotNull().forEach { clientId ->
+                            if (!arrListClients.contains(clientId)) {
+                                arrListClients.add(clientId)
+                            }
+                        }
+                    }
+                    Log.d("MainActivity", "Client connected - total clients: ${arrListClients.size}, clients: $arrListClients")
                 }
                 println("Connected to server")
             } catch (e: Exception) {
@@ -1116,6 +1126,41 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     }
 
 
+    /**
+     * Broadcasts JSON data to ALL connected WebSocket clients.
+     * Uses WebSocketManager to get accurate client list.
+     */
+    private fun broadcastToAllClients(jsonObject: JsonObject) {
+        val allClients = TCPServer.WebSocketManager.getAllClients()
+        Log.d("MainActivity", "broadcastToAllClients - total clients: ${allClients.size}")
+
+        if (allClients.isEmpty()) {
+            Log.w("MainActivity", "No clients connected to broadcast!")
+            return
+        }
+
+        val jsonMessage = gson.toJson(jsonObject)
+        var successCount = 0
+        var failCount = 0
+
+        allClients.forEach { clientHandler ->
+            if (clientHandler.isWebSocket) {
+                Thread {
+                    try {
+                        Log.d("MainActivity", "Broadcasting to client: ${clientHandler.clientId}")
+                        clientHandler.sendMessageToClient(clientHandler.clientId, jsonMessage)
+                        successCount++
+                    } catch (e: Exception) {
+                        Log.e("MainActivity", "Failed to send to client ${clientHandler.clientId}: ${e.message}")
+                        failCount++
+                    }
+                }.start()
+            }
+        }
+
+        Log.d("MainActivity", "Broadcast initiated to ${allClients.size} clients")
+    }
+
     private fun sendMessageToAllConnectedClients(
         jsonObject: JsonObject,
         onSuccess: () -> Unit,
@@ -1125,7 +1170,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             // Get all the connected client handlers from your WebSocket manager
             val connectedClients = TCPServer.WebSocketManager.getAllClients()
 
-            println("here is all clients connected $connectedClients")
+            Log.d("MainActivity", "sendMessageToAllConnectedClients - total clients: ${connectedClients.size}")
+
+            if (connectedClients.isEmpty()) {
+                Log.w("MainActivity", "No clients connected!")
+                return
+            }
 
             // Loop through each client and send the message only if they are connected
             connectedClients.forEach { clientHandler ->
@@ -1133,18 +1183,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     Thread {
                         try {
                             val jsonMessage = gson.toJson(jsonObject)
-                            println("Sending message to client: ${clientHandler.clientId}")
+                            Log.d("MainActivity", "Sending message to client: ${clientHandler.clientId}")
                             clientHandler.sendMessageToClient(clientHandler.clientId, jsonMessage)
                             onSuccess() // Successfully sent the message
                         } catch (e: Exception) {
-                            // Call failure callback for that particular client
+                            Log.e("MainActivity", "Failed to send to ${clientHandler.clientId}: ${e.message}")
                             onFailure(e)
                         }
                     }.start()
                 }
             }
         } catch (e: Exception) {
-            // Call failure callback for errors outside the thread loop
+            Log.e("MainActivity", "sendMessageToAllConnectedClients error: ${e.message}")
             onFailure(e)
         }
     }

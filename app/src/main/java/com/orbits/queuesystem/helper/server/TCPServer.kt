@@ -656,11 +656,13 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     }
 
     // websocket manager for managing client id and updating ids
+    // Uses ConcurrentHashMap for thread-safe access during concurrent client connections/disconnections
     object WebSocketManager {
-        private val clientHandlers: MutableMap<String, ClientHandler> = mutableMapOf()
+        private val clientHandlers: ConcurrentHashMap<String, ClientHandler> = ConcurrentHashMap()
 
         fun addClientHandler(clientId: String, clientHandler: ClientHandler) {
             clientHandlers[clientId] = clientHandler
+            Log.d("WebSocketManager", "Added client: $clientId, total clients: ${clientHandlers.size}")
         }
 
         fun getClientHandler(clientId: String): ClientHandler? {
@@ -671,15 +673,28 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
             val handler = clientHandlers.remove(oldClientId)
             if (handler != null) {
                 clientHandlers[newClientId] = handler
+                Log.d("WebSocketManager", "Updated client ID from $oldClientId to $newClientId")
             }
         }
 
         fun removeClientHandler(clientId: String) {
             clientHandlers.remove(clientId)
+            Log.d("WebSocketManager", "Removed client: $clientId, remaining clients: ${clientHandlers.size}")
         }
 
         fun getAllClients(): List<ClientHandler> {
-            return clientHandlers.values.toList() // Return all client handlers without checking their connection status
+            // Return a snapshot copy of current clients for safe iteration
+            val clients = clientHandlers.values.toList()
+            Log.d("WebSocketManager", "getAllClients called, returning ${clients.size} clients")
+            return clients
+        }
+
+        fun getClientCount(): Int {
+            return clientHandlers.size
+        }
+
+        fun getAllClientIds(): List<String> {
+            return clientHandlers.keys().toList()
         }
     }
 }

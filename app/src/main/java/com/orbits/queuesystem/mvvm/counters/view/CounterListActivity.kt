@@ -97,28 +97,55 @@ class CounterListActivity : BaseActivity() {
     }
 
     private fun sendToAllClients() {
-        Log.d("CounterListActivity", "Sending to all clients: ${MainActivity.arrListClients}")
-        MainActivity.arrListClients.forEach { clientId ->
-            Log.d("CounterListActivity", "Sending to client: $clientId")
-            sendMessageToWebSocketClient(clientId, createJsonData())
+        // Get all clients directly from WebSocketManager for accurate client list
+        val allClientHandlers = TCPServer.WebSocketManager.getAllClients()
+
+        Log.d("CounterListActivity", "Sending to all clients - total from WebSocketManager: ${allClientHandlers.size}")
+        Log.d("CounterListActivity", "arrListClients: ${MainActivity.arrListClients}")
+
+        if (allClientHandlers.isEmpty()) {
+            Log.w("CounterListActivity", "No clients connected to broadcast!")
+            return
+        }
+
+        val jsonData = createJsonData()
+        allClientHandlers.forEach { clientHandler ->
+            if (clientHandler.isWebSocket) {
+                Log.d("CounterListActivity", "Sending to client: ${clientHandler.clientId}")
+                sendMessageToClientHandler(clientHandler, jsonData)
+            } else {
+                Log.d("CounterListActivity", "Skipping non-WebSocket client: ${clientHandler.clientId}")
+            }
         }
     }
-    private fun sendMessageToWebSocketClient(clientId: String, jsonObject: JsonObject) {
 
+    private fun sendMessageToClientHandler(clientHandler: TCPServer.ClientHandler, jsonObject: JsonObject) {
         try {
-            // this method to get client handler used in server
+            Thread {
+                val jsonMessage = gson.toJson(jsonObject)
+                Log.d("CounterListActivity", "Broadcasting to client: ${clientHandler.clientId}")
+                clientHandler.sendMessageToClient(clientHandler.clientId, jsonMessage)
+            }.start()
+        } catch (e: Exception) {
+            Log.e("CounterListActivity", "Error sending to client ${clientHandler.clientId}: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    private fun sendMessageToWebSocketClient(clientId: String, jsonObject: JsonObject) {
+        try {
             val clientHandler = TCPServer.WebSocketManager.getClientHandler(clientId)
             if (clientHandler != null && clientHandler.isWebSocket) {
                 Thread {
                     val jsonMessage = gson.toJson(jsonObject)
-                    println("here is new 222 $clientId")
+                    Log.d("CounterListActivity", "Sending to specific client: $clientId")
                     clientHandler.sendMessageToClient(clientId, jsonMessage)
                 }.start()
-                // Optionally handle success or error
             } else {
-                // Handle case where clientHandler is not found or not a WebSocket client
+                Log.w("CounterListActivity", "Client handler not found or not WebSocket for: $clientId")
             }
         } catch (e: Exception) {
+            Log.e("CounterListActivity", "Error sending to client $clientId: ${e.message}")
             e.printStackTrace()
         }
     }
