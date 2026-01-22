@@ -113,12 +113,16 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     private fun addToConnectedClients(clientId: String) {
         synchronized(clients) {
             val currentList = connectedClientsList.value.orEmpty().toMutableList()
-            currentList.add(clientId)
-            println("here is list 1111 $currentList")
+            // Prevent duplicate entries
+            if (!currentList.contains(clientId)) {
+                currentList.add(clientId)
+                Log.d("TCPServer", "Added client to connected list: $clientId, total: ${currentList.size}")
+            } else {
+                Log.d("TCPServer", "Client $clientId already in connected list, skipping add")
+            }
             connectedClientsList.postValue(currentList)
             arrListClients.clear()
             arrListClients.addAll(currentList)
-            println("here is list new 111 ${arrListClients}")
         }
     }
 
@@ -131,9 +135,13 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     private fun removeFromConnectedClients(clientId: String) {
         synchronized(clients) {
             clients.remove(clientId)
+            // Also remove from WebSocketManager to prevent stale entries
+            WebSocketManager.removeClientHandler(clientId)
             val currentList = connectedClientsList.value.orEmpty().toMutableList()
             currentList.remove(clientId)
             connectedClientsList.postValue(currentList)
+            arrListClients.remove(clientId)
+            Log.d("TCPServer", "Removed client: $clientId, remaining: ${arrListClients.size}")
         }
     }
 
@@ -155,15 +163,71 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         var clientId = UUID.randomUUID().toString() // random client id connected at start for connection
         private var counterId : String? = null
         private var ticketId : String? = null
+        private var isAddedToManager = false // Track if we've been added to WebSocketManager
 
         init {
             try {
-                WebSocketManager.addClientHandler(clientId ?: "", this)
+                // Don't add to WebSocketManager here with random UUID
+                // We'll add it later when we have a meaningful client ID (counterId, displayId, etc.)
+                // This prevents orphaned entries when connection fails before getting real ID
                 inStream = BufferedReader(InputStreamReader(clientSocket?.getInputStream()))
                 outStream = clientSocket?.getOutputStream()
+                Log.d("ClientHandler", "Initialized client handler with temp ID: $clientId")
             } catch (e: Exception) {
+                Log.e("ClientHandler", "Error initializing client handler: ${e.message}")
                 e.printStackTrace()
             }
+        }
+
+        /**
+         * Registers this handler with WebSocketManager using the current clientId.
+         * Should be called after we have a meaningful client ID.
+         * Also handles updating from temporary UUID to real client ID.
+         *
+         * @param newClientId The new client ID to use (counterId, displayId, etc.)
+         * @return true if registration was successful, false if this is a duplicate connection
+         */
+        private fun registerWithManager(newClientId: String? = null): Boolean {
+            val idToUse = newClientId ?: clientId
+
+            // Check if this is a meaningful ID (not a temp UUID) and if client already exists
+            if (newClientId != null && newClientId != clientId) {
+                // Check for existing active connection with same ID
+                val existingHandler = WebSocketManager.getClientHandler(newClientId)
+                if (existingHandler != null && existingHandler != this) {
+                    // Check if existing connection is still active
+                    try {
+                        if (existingHandler.clientSocket?.isClosed == false &&
+                            existingHandler.clientSocket?.isConnected == true) {
+                            Log.w("ClientHandler", "Client $newClientId already has active connection, closing this duplicate")
+                            // Close this new connection as duplicate
+                            return false
+                        } else {
+                            // Existing connection is stale, remove it
+                            Log.d("ClientHandler", "Replacing stale connection for $newClientId")
+                            WebSocketManager.removeClientHandler(newClientId)
+                        }
+                    } catch (e: Exception) {
+                        // Error checking, assume stale and remove
+                        WebSocketManager.removeClientHandler(newClientId)
+                    }
+                }
+
+                // Update from old temp ID to new ID
+                if (isAddedToManager) {
+                    WebSocketManager.updateClientId(clientId, newClientId)
+                } else {
+                    WebSocketManager.addClientHandler(newClientId, this)
+                }
+                clientId = newClientId
+            } else if (!isAddedToManager) {
+                // First time registration with current ID
+                WebSocketManager.addClientHandler(idToUse, this)
+            }
+
+            isAddedToManager = true
+            Log.d("ClientHandler", "Registered client with manager: $clientId, total: ${WebSocketManager.getClientCount()}")
+            return true
         }
 
         @RequiresApi(Build.VERSION_CODES.O)
@@ -190,8 +254,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                         val displayId = jsonObject.get("displayId").asString
                                         println("here is display id $displayId")
                                         if (!displayId.isNullOrEmpty()) {
-                                            WebSocketManager.updateClientId(clientId, displayId)
-                                            clientId = displayId
+                                            registerWithManager(displayId)
                                             clients[clientId] = this
                                             addToConnectedClients(clientId)
                                             messageListener.onClientConnected(clientSocket,arrListClients)
@@ -202,6 +265,8 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                     }else {
                                         if (jsonObject.has("transaction")){
                                             println("here is msg with status")
+                                            // Register with current clientId for transaction messages
+                                            registerWithManager()
                                             messageListener.onClientConnected(clientSocket,arrListClients)
                                             Extensions.handler(400) {
                                                 messageListener.onMessageJsonReceived(jsonObject)
@@ -211,14 +276,10 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                             counterId = jsonObject.get("counterId").asString // Fetch from database
                                             println("here is counter id $counterId")
                                             if (!counterId.isNullOrEmpty()) {
-                                                // Update client ID in WebSocketManager
-                                                WebSocketManager.updateClientId(
-                                                    clientId ?: "",
-                                                    counterId ?: ""
-                                                )
-                                                clientId = counterId ?: ""
-                                                clients[clientId ?: ""] = this
-                                                addToConnectedClients(clientId ?: "")
+                                                // Register with counterId
+                                                registerWithManager(counterId)
+                                                clients[clientId] = this
+                                                addToConnectedClients(clientId)
                                                 messageListener.onClientConnected(clientSocket,arrListClients)
                                                 Extensions.handler(400) {
                                                     messageListener.onMessageJsonReceived(jsonObject)
@@ -234,12 +295,8 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                         ticketId = jsonObject.get("ticketId").asString
                                         println("here is ticketId id $ticketId")
                                         if (!ticketId.isNullOrEmpty()) {
-                                            // Update client ID in WebSocketManager
-                                            WebSocketManager.updateClientId(
-                                                clientId,
-                                                ticketId ?: ""
-                                            )
-                                            clientId = ticketId ?: ""
+                                            // Register with ticketId
+                                            registerWithManager(ticketId)
                                             clients[clientId] = this
                                             addToConnectedClients(clientId)
                                             messageListener.onClientConnected(clientSocket,arrListClients)
@@ -256,10 +313,14 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                 }
                                 // For All connections
                                 jsonObject.has(Constants.CONNECTION) -> {
-                                    println("here is connection received")
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "Connection message received from client: $clientId, isAddedToManager: $isAddedToManager")
+                                    // Only register if not already registered (prevents duplicate entries from heartbeat messages)
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
@@ -267,10 +328,14 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                 // For Display
 
                                 jsonObject.has(Constants.DISPLAY_CONNECTION) -> {
-                                    println("here is connection received")
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "Display connection received from client: $clientId, isAddedToManager: $isAddedToManager")
+                                    // Only register if not already registered
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
@@ -278,14 +343,10 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
 
                                 // For Master Display
                                 jsonObject.has(Constants.MASTER_DISPLAY_CONNECTION) -> {
-                                    println("here is connection received")
+                                    println("here is master display connection received")
                                     val masterId = "M${generateCustomMasterId()}"
                                     if (masterId.isNotEmpty()) {
-                                        WebSocketManager.updateClientId(
-                                            clientId,
-                                            masterId
-                                        )
-                                        clientId = masterId
+                                        registerWithManager(masterId)
                                         clients[clientId] = this
                                         addToConnectedClients(clientId)
                                         arrListMasterDisplays.add(clientId)
@@ -298,20 +359,26 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                 }
                                 // For Login with keypad for username
                                 jsonObject.has(Constants.USERNAME) -> {
-                                    var userClientId = UUID.randomUUID().toString()
-                                    WebSocketManager.updateClientId(clientId, userClientId)
-                                    clientId = userClientId
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    // Only register once for login messages
+                                    if (!isAddedToManager) {
+                                        var userClientId = UUID.randomUUID().toString()
+                                        registerWithManager(userClientId)
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
                                 }
                                 // for various client connection
                                 else -> {
-                                    clients[clientId] = this
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    // Only register if not already registered
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
@@ -344,8 +411,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                         val displayId = jsonObject.get("displayId").asString
                                         println("here is display id $displayId")
                                         if (!displayId.isNullOrEmpty()) {
-                                            WebSocketManager.updateClientId(clientId, displayId)
-                                            clientId = displayId
+                                            registerWithManager(displayId)
                                             clients[clientId] = this
                                             addToConnectedClients(clientId)
                                             messageListener.onClientConnected(clientSocket,arrListClients)
@@ -356,6 +422,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                     }else {
                                         if (jsonObject.has("transaction")){
                                             println("here is msg with status")
+                                            registerWithManager()
                                             messageListener.onClientConnected(clientSocket,arrListClients)
                                             Extensions.handler(400) {
                                                 messageListener.onMessageJsonReceived(jsonObject)
@@ -365,14 +432,10 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                             counterId = jsonObject.get("counterId").asString // Fetch from database
                                             println("here is counter id $counterId")
                                             if (!counterId.isNullOrEmpty()) {
-                                                // Update client ID in WebSocketManager
-                                                WebSocketManager.updateClientId(
-                                                    clientId ?: "",
-                                                    counterId ?: ""
-                                                )
-                                                clientId = counterId ?: ""
-                                                clients[clientId ?: ""] = this
-                                                addToConnectedClients(clientId ?: "")
+                                                // Register with counterId
+                                                registerWithManager(counterId)
+                                                clients[clientId] = this
+                                                addToConnectedClients(clientId)
                                                 messageListener.onClientConnected(clientSocket,arrListClients)
                                                 Extensions.handler(400) {
                                                     messageListener.onMessageJsonReceived(jsonObject)
@@ -386,12 +449,8 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                         ticketId = jsonObject.get("ticketId").asString
                                         println("here is ticketId id $ticketId")
                                         if (!ticketId.isNullOrEmpty()) {
-                                            // Update client ID in WebSocketManager
-                                            WebSocketManager.updateClientId(
-                                                clientId,
-                                                ticketId ?: ""
-                                            )
-                                            clientId = ticketId ?: ""
+                                            // Register with ticketId
+                                            registerWithManager(ticketId)
                                             clients[clientId] = this
                                             addToConnectedClients(clientId)
                                             messageListener.onClientConnected(clientSocket,arrListClients)
@@ -408,57 +467,67 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                                 }
 
                                 jsonObject.has(Constants.CONNECTION) -> {
-                                    println("here is connection received")
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "TCP Connection message from: $clientId, isAddedToManager: $isAddedToManager")
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
                                 }
 
                                 jsonObject.has(Constants.DISPLAY_CONNECTION) -> {
-                                    println("here is connection received")
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "TCP Display connection from: $clientId, isAddedToManager: $isAddedToManager")
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
                                 }
 
                                 jsonObject.has(Constants.MASTER_DISPLAY_CONNECTION) -> {
-                                    println("here is connection received")
-                                    val masterId = "M${generateCustomMasterId()}"
-                                    if (masterId.isNotEmpty()) {
-                                        WebSocketManager.updateClientId(
-                                            clientId,
-                                            masterId
-                                        )
-                                        clientId = masterId
-                                        clients[clientId] = this
-                                        addToConnectedClients(clientId)
-                                        messageListener.onClientConnected(clientSocket,arrListClients)
-                                        Extensions.handler(400) {
-                                            messageListener.onMessageJsonReceived(jsonObject)
+                                    Log.d("ClientHandler", "TCP Master display connection from: $clientId, isAddedToManager: $isAddedToManager")
+                                    if (!isAddedToManager) {
+                                        val masterId = "M${generateCustomMasterId()}"
+                                        if (masterId.isNotEmpty()) {
+                                            registerWithManager(masterId)
+                                            clients[clientId] = this
+                                            addToConnectedClients(clientId)
                                         }
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
+                                    Extensions.handler(400) {
+                                        messageListener.onMessageJsonReceived(jsonObject)
                                     }
                                 }
 
                                 jsonObject.has(Constants.USERNAME) -> {
-                                    var userClientId = UUID.randomUUID().toString()
-                                    WebSocketManager.updateClientId(clientId, userClientId)
-                                    clientId = userClientId
-                                    clients[clientId] = this
-                                    addToConnectedClients(clientId)
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "TCP Username message from: $clientId, isAddedToManager: $isAddedToManager")
+                                    if (!isAddedToManager) {
+                                        var userClientId = UUID.randomUUID().toString()
+                                        registerWithManager(userClientId)
+                                        clients[clientId] = this
+                                        addToConnectedClients(clientId)
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
                                 }
                                 else -> {
-                                    clients[clientId] = this
-                                    messageListener.onClientConnected(clientSocket,arrListClients)
+                                    Log.d("ClientHandler", "TCP Other message from: $clientId, isAddedToManager: $isAddedToManager")
+                                    if (!isAddedToManager) {
+                                        registerWithManager()
+                                        clients[clientId] = this
+                                    }
+                                    messageListener.onClientConnected(clientSocket, arrListClients)
                                     Extensions.handler(400) {
                                         messageListener.onMessageJsonReceived(jsonObject)
                                     }
@@ -481,19 +550,20 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                 e.printStackTrace()
             } finally {
                 try {
+                    Log.d("ClientHandler", "Cleaning up client: $clientId")
                     inStream?.close()
                     outStream?.close()
                     clientSocket?.close()
                     clients.remove(clientId)
+                    // Remove from WebSocketManager - this is critical to prevent stale entries
+                    WebSocketManager.removeClientHandler(clientId ?: "")
                     removeFromConnectedClients(clientId ?: "")
-                    println("Client disconnected: $clientId")
+                    Log.d("ClientHandler", "Client disconnected and cleaned up: $clientId")
                     messageListener.onClientDisconnected(clientId)
                 } catch (e: Exception) {
+                    Log.e("ClientHandler", "Error during client cleanup: ${e.message}")
                     e.printStackTrace()
                 }
-//                finally {
-//                    close()
-//                }
             }
         }
 
@@ -660,33 +730,101 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     object WebSocketManager {
         private val clientHandlers: ConcurrentHashMap<String, ClientHandler> = ConcurrentHashMap()
 
+        /**
+         * Adds a client handler. If a client with the same ID already exists,
+         * the old one is closed and replaced (handles app restart scenario).
+         */
         fun addClientHandler(clientId: String, clientHandler: ClientHandler) {
+            if (clientId.isEmpty()) {
+                Log.w("WebSocketManager", "Attempted to add client with empty ID, ignoring")
+                return
+            }
+
+            // Check if client with same ID already exists (app restart scenario)
+            val existingHandler = clientHandlers[clientId]
+            if (existingHandler != null && existingHandler != clientHandler) {
+                Log.d("WebSocketManager", "Client $clientId already exists, closing old connection")
+                try {
+                    existingHandler.close()
+                } catch (e: Exception) {
+                    Log.e("WebSocketManager", "Error closing existing client: ${e.message}")
+                }
+            }
+
             clientHandlers[clientId] = clientHandler
-            Log.d("WebSocketManager", "Added client: $clientId, total clients: ${clientHandlers.size}")
+            Log.d("WebSocketManager", "Added client: $clientId, total clients: ${clientHandlers.size} $clientHandlers")
         }
 
         fun getClientHandler(clientId: String): ClientHandler? {
             return clientHandlers[clientId]
         }
 
+        /**
+         * Updates client ID from old to new. If newClientId already exists,
+         * closes the existing handler first (handles reconnection with same counter ID).
+         */
         fun updateClientId(oldClientId: String, newClientId: String) {
+            if (oldClientId == newClientId) {
+                Log.d("WebSocketManager", "Old and new client IDs are same, no update needed")
+                return
+            }
+
             val handler = clientHandlers.remove(oldClientId)
             if (handler != null) {
+                // Check if newClientId already has a handler (reconnection scenario)
+                val existingHandler = clientHandlers[newClientId]
+                if (existingHandler != null && existingHandler != handler) {
+                    Log.d("WebSocketManager", "Client $newClientId already exists, closing old connection")
+                    try {
+                        existingHandler.close()
+                    } catch (e: Exception) {
+                        Log.e("WebSocketManager", "Error closing existing client: ${e.message}")
+                    }
+                }
+
                 clientHandlers[newClientId] = handler
-                Log.d("WebSocketManager", "Updated client ID from $oldClientId to $newClientId")
+                Log.d("WebSocketManager", "Updated client ID from $oldClientId to $newClientId, total: ${clientHandlers.size}")
+            } else {
+                Log.w("WebSocketManager", "No handler found for oldClientId: $oldClientId")
             }
         }
 
         fun removeClientHandler(clientId: String) {
-            clientHandlers.remove(clientId)
-            Log.d("WebSocketManager", "Removed client: $clientId, remaining clients: ${clientHandlers.size}")
+            val removed = clientHandlers.remove(clientId)
+            if (removed != null) {
+                Log.d("WebSocketManager", "Removed client: $clientId, remaining clients: ${clientHandlers.size}")
+            }
         }
 
+        /**
+         * Returns only active/connected clients by filtering out closed sockets.
+         */
         fun getAllClients(): List<ClientHandler> {
-            // Return a snapshot copy of current clients for safe iteration
-            val clients = clientHandlers.values.toList()
-            Log.d("WebSocketManager", "getAllClients called, returning ${clients.size} clients")
-            return clients
+            // Filter out clients with closed sockets
+            val activeClients = clientHandlers.values.filter { handler ->
+                try {
+                    handler.clientSocket?.isClosed == false && handler.clientSocket?.isConnected == true
+                } catch (e: Exception) {
+                    false
+                }
+            }
+
+            // Clean up stale entries
+            val staleClientIds = clientHandlers.filter { (_, handler) ->
+                try {
+                    handler.clientSocket?.isClosed == true || handler.clientSocket?.isConnected == false
+                } catch (e: Exception) {
+                    true
+                }
+            }.keys
+
+            staleClientIds.forEach { clientId ->
+                clientHandlers.remove(clientId)
+                Log.d("WebSocketManager", "Cleaned up stale client: $clientId")
+            }
+
+            Log.d("WebSocketManager", "getAllClients: ${activeClients.size} active, removed ${staleClientIds.size} stale")
+            return activeClients
         }
 
         fun getClientCount(): Int {
@@ -695,6 +833,32 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
 
         fun getAllClientIds(): List<String> {
             return clientHandlers.keys().toList()
+        }
+
+        /**
+         * Cleans up all disconnected/stale client handlers.
+         * Can be called periodically or before broadcasts.
+         */
+        fun cleanupStaleClients() {
+            val staleClientIds = mutableListOf<String>()
+
+            clientHandlers.forEach { (clientId, handler) ->
+                try {
+                    if (handler.clientSocket?.isClosed == true || handler.clientSocket?.isConnected == false) {
+                        staleClientIds.add(clientId)
+                    }
+                } catch (e: Exception) {
+                    staleClientIds.add(clientId)
+                }
+            }
+
+            staleClientIds.forEach { clientId ->
+                clientHandlers.remove(clientId)
+            }
+
+            if (staleClientIds.isNotEmpty()) {
+                Log.d("WebSocketManager", "Cleaned up ${staleClientIds.size} stale clients: $staleClientIds")
+            }
         }
     }
 }
