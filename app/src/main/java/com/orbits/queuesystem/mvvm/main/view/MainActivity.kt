@@ -38,6 +38,7 @@ import com.orbits.queuesystem.helper.configs.JsonConfig.createNoTokensData
 import com.orbits.queuesystem.helper.configs.JsonConfig.createReconnectionJsonDataWithTransaction
 import com.orbits.queuesystem.helper.configs.JsonConfig.createServiceJsonDataWithModel
 import com.orbits.queuesystem.helper.configs.JsonConfig.createServiceJsonDataWithTransaction
+import com.orbits.queuesystem.helper.configs.JsonConfig.createServiceJsonDataWithTransactionForRepeat
 import com.orbits.queuesystem.helper.configs.JsonConfig.createTransactionsJsonData
 import com.orbits.queuesystem.helper.configs.JsonConfig.createUserJsonData
 import com.orbits.queuesystem.helper.interfaces.MessageListener
@@ -811,7 +812,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         sendDisplayData(
                             json = json,
                             counterModel = counterModel,
-                            sentModel = getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: "")
+                            sentModel = getTransactionByToken(json.get("repeatToken")?.asString ?: "",counterModel?.serviceId ?: ""),
+                            true
                         )
 
                         if(!json.has("isFirst")){
@@ -1202,7 +1204,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
 
     // This Function is used to send data's to displays connected to keypad when token is callout or next button pressed on keypad
-    private fun sendDisplayData(json: JsonObject,counterModel: CounterDataDbModel?, sentModel: TransactionDataDbModel?){
+    private fun sendDisplayData(json: JsonObject,counterModel: CounterDataDbModel?, sentModel: TransactionDataDbModel?, isRepeat: Boolean = false ){
         if (arrListDisplays.isNotEmpty()) {
             val targetCounterId = json.get("counterId")?.asString ?: ""
 
@@ -1223,9 +1225,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     val displayId = display?.id ?: ""
                     println("sendDisplayData: Sending token to display id=$displayId")
 
+
+                    val transactionListDataModel =
+                        if (isRepeat){
+                            createServiceJsonDataWithTransactionForRepeat(sentModel)
+                        }
+                        else {
+                            createServiceJsonDataWithTransaction(sentModel)
+                        }
+
                     sendMessageToWebSocketClientWith(
                         displayId,
-                        createServiceJsonDataWithTransaction(sentModel),
+                        transactionListDataModel,
                         onSuccess = {
                             println("sendDisplayData: Successfully sent token to display id=$displayId")
                             if (tcpServer?.arrListMasterDisplays?.isNotEmpty() == true){

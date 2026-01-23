@@ -40,6 +40,8 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     var masterDisplay = 1
     @Volatile private var isRunning = false
     private var serverThread: Thread? = null
+    private var cleanupHandler: Handler? = null
+    private val CLEANUP_INTERVAL = 60_000L * 15 // Run cleanup every 15 min
 
     init {
         connectedClientsList.value = emptyList()
@@ -49,6 +51,9 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         if (isRunning) return
 
         isRunning = true
+
+        // Start periodic cleanup of stale clients
+        startPeriodicCleanup()
 
         serverThread = Thread {
             try {
@@ -61,6 +66,11 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
 
                 while (isRunning) {
                     val clientSocket = serverSocket!!.accept()
+                    val clientIp = clientSocket.inetAddress.hostAddress
+
+                    // Check for existing connection from same IP and clean it up
+                    cleanupExistingConnectionFromIp(clientIp)
+
                     val clientHandler = ClientHandler(clientSocket)
 
                     val clientId = clientHandler.clientId
@@ -73,7 +83,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
 //                    clients[clientId] = clientHandler
                     Thread(clientHandler).start()
 
-                    Log.i("TCPServer", "Client connected: ${clientSocket.inetAddress.hostAddress}")
+                    Log.i("TCPServer", "Client connected: $clientIp")
                 }
 
             } catch (e: Exception) {
@@ -88,16 +98,120 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         serverThread!!.start()
 
     }
+
+    /**
+     * Cleans up any existing connection from the same IP address.
+     * This ensures only one connection per device.
+     */
+    private fun cleanupExistingConnectionFromIp(newClientIp: String?) {
+        if (newClientIp.isNullOrEmpty()) return
+
+        val clientsToRemove = mutableListOf<String>()
+
+        clients.forEach { (clientId, handler) ->
+            try {
+                val existingIp = handler.clientSocket?.inetAddress?.hostAddress
+                if (existingIp == newClientIp) {
+                    Log.d("TCPServer", "Found existing connection from IP $newClientIp (clientId: $clientId), marking for removal")
+                    clientsToRemove.add(clientId)
+                }
+            } catch (e: Exception) {
+                // Socket might be in bad state, mark for removal
+                clientsToRemove.add(clientId)
+            }
+        }
+
+        clientsToRemove.forEach { clientId ->
+            try {
+                val handler = clients.remove(clientId)
+                handler?.close()
+                WebSocketManager.removeClientHandler(clientId)
+                removeFromConnectedClients(clientId)
+                Log.d("TCPServer", "Removed old connection: $clientId from IP: $newClientIp")
+            } catch (e: Exception) {
+                Log.e("TCPServer", "Error removing old connection: ${e.message}")
+            }
+        }
+    }
+
+    /**
+     * Starts periodic cleanup of stale/disconnected clients.
+     */
+    private fun startPeriodicCleanup() {
+        cleanupHandler = Handler(Looper.getMainLooper())
+        val cleanupRunnable = object : Runnable {
+            override fun run() {
+                if (isRunning) {
+                    performCleanup()
+                    cleanupHandler?.postDelayed(this, CLEANUP_INTERVAL)
+                }
+            }
+        }
+        cleanupHandler?.postDelayed(cleanupRunnable, CLEANUP_INTERVAL)
+        Log.d("TCPServer", "Started periodic cleanup every ${CLEANUP_INTERVAL / 1000} seconds")
+    }
+
+    /**
+     * Performs cleanup of stale clients from both clients map and WebSocketManager.
+     */
+    private fun performCleanup() {
+        Log.d("TCPServer", "Running periodic cleanup... Current clients: ${clients.size}, WebSocketManager clients: ${WebSocketManager.getClientCount()}")
+
+        // Clean up stale entries from clients map
+        val staleClientIds = mutableListOf<String>()
+        clients.forEach { (clientId, handler) ->
+            try {
+                if (handler.clientSocket?.isClosed == true || handler.clientSocket?.isConnected == false) {
+                    staleClientIds.add(clientId)
+                }
+            } catch (e: Exception) {
+                staleClientIds.add(clientId)
+            }
+        }
+
+        staleClientIds.forEach { clientId ->
+            clients.remove(clientId)
+            removeFromConnectedClients(clientId)
+        }
+
+        // Also clean up WebSocketManager
+        WebSocketManager.cleanupStaleClients()
+
+        // Sync arrListClients with actual connected clients
+        synchronized(clients) {
+            arrListClients.clear()
+            arrListClients.addAll(clients.keys)
+            connectedClientsList.postValue(arrListClients.toList())
+        }
+
+        if (staleClientIds.isNotEmpty()) {
+            Log.d("TCPServer", "Cleanup removed ${staleClientIds.size} stale clients. Remaining: ${clients.size}")
+        }
+    }
     fun stop() {
         isRunning = false
 
-//        try {
-//            clients.values.forEach { it.close() } //doubt
-//            clients.clear()
+        // Stop periodic cleanup
+        cleanupHandler?.removeCallbacksAndMessages(null)
+        cleanupHandler = null
+
+        // Close all client connections
+        try {
+            clients.values.forEach {
+                try {
+                    it.close()
+                } catch (e: Exception) {
+                    // Ignore individual close errors
+                }
+            }
+            clients.clear()
+            arrListClients.clear()
+            arrListMasterDisplays.clear()
+            WebSocketManager.clearAll()
             serverSocket?.close()
-//        } catch (e: Exception) {
-//            Log.e("TCPServer", "Error stopping server", e)
-//        }
+        } catch (e: Exception) {
+            Log.e("TCPServer", "Error stopping server", e)
+        }
 
         serverSocket = null
         serverThread = null
@@ -729,15 +843,43 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
     // Uses ConcurrentHashMap for thread-safe access during concurrent client connections/disconnections
     object WebSocketManager {
         private val clientHandlers: ConcurrentHashMap<String, ClientHandler> = ConcurrentHashMap()
+        // Track IP to clientId mapping to prevent duplicate connections from same device
+        private val ipToClientId: ConcurrentHashMap<String, String> = ConcurrentHashMap()
 
         /**
-         * Adds a client handler. If a client with the same ID already exists,
-         * the old one is closed and replaced (handles app restart scenario).
+         * Adds a client handler. If a client with the same ID or IP already exists,
+         * the old one is closed and replaced (handles app restart/reconnection scenario).
          */
         fun addClientHandler(clientId: String, clientHandler: ClientHandler) {
             if (clientId.isEmpty()) {
                 Log.w("WebSocketManager", "Attempted to add client with empty ID, ignoring")
                 return
+            }
+
+            // Get IP address of new client
+            val clientIp = try {
+                clientHandler.clientSocket?.inetAddress?.hostAddress ?: ""
+            } catch (e: Exception) {
+                ""
+            }
+
+            // Check if there's already a client from this IP address
+            if (clientIp.isNotEmpty()) {
+                val existingClientId = ipToClientId[clientIp]
+                if (existingClientId != null && existingClientId != clientId) {
+                    val existingHandler = clientHandlers[existingClientId]
+                    if (existingHandler != null) {
+                        Log.d("WebSocketManager", "Found existing client $existingClientId from same IP $clientIp, removing old connection")
+                        try {
+                            existingHandler.close()
+                        } catch (e: Exception) {
+                            Log.e("WebSocketManager", "Error closing existing client from same IP: ${e.message}")
+                        }
+                        clientHandlers.remove(existingClientId)
+                    }
+                }
+                // Update IP mapping
+                ipToClientId[clientIp] = clientId
             }
 
             // Check if client with same ID already exists (app restart scenario)
@@ -752,7 +894,7 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
             }
 
             clientHandlers[clientId] = clientHandler
-            Log.d("WebSocketManager", "Added client: $clientId, total clients: ${clientHandlers.size} $clientHandlers")
+            Log.d("WebSocketManager", "Added client: $clientId (IP: $clientIp), total clients: ${clientHandlers.size}")
         }
 
         fun getClientHandler(clientId: String): ClientHandler? {
@@ -792,6 +934,15 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
         fun removeClientHandler(clientId: String) {
             val removed = clientHandlers.remove(clientId)
             if (removed != null) {
+                // Also remove from IP mapping
+                val clientIp = try {
+                    removed.clientSocket?.inetAddress?.hostAddress ?: ""
+                } catch (e: Exception) {
+                    ""
+                }
+                if (clientIp.isNotEmpty()) {
+                    ipToClientId.remove(clientIp)
+                }
                 Log.d("WebSocketManager", "Removed client: $clientId, remaining clients: ${clientHandlers.size}")
             }
         }
@@ -841,11 +992,17 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
          */
         fun cleanupStaleClients() {
             val staleClientIds = mutableListOf<String>()
+            val staleIps = mutableListOf<String>()
 
             clientHandlers.forEach { (clientId, handler) ->
                 try {
                     if (handler.clientSocket?.isClosed == true || handler.clientSocket?.isConnected == false) {
                         staleClientIds.add(clientId)
+                        // Also track IP for cleanup
+                        val ip = handler.clientSocket?.inetAddress?.hostAddress
+                        if (ip != null) {
+                            staleIps.add(ip)
+                        }
                     }
                 } catch (e: Exception) {
                     staleClientIds.add(clientId)
@@ -856,9 +1013,37 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                 clientHandlers.remove(clientId)
             }
 
+            // Clean up IP mappings for stale clients
+            staleIps.forEach { ip ->
+                ipToClientId.remove(ip)
+            }
+
             if (staleClientIds.isNotEmpty()) {
                 Log.d("WebSocketManager", "Cleaned up ${staleClientIds.size} stale clients: $staleClientIds")
             }
+        }
+
+        /**
+         * Gets the current count of IP to client mappings (for debugging).
+         */
+        fun getIpMappingCount(): Int {
+            return ipToClientId.size
+        }
+
+        /**
+         * Clears all clients and IP mappings. Use when restarting server.
+         */
+        fun clearAll() {
+            clientHandlers.values.forEach { handler ->
+                try {
+                    handler.close()
+                } catch (e: Exception) {
+                    // Ignore close errors
+                }
+            }
+            clientHandlers.clear()
+            ipToClientId.clear()
+            Log.d("WebSocketManager", "Cleared all clients and IP mappings")
         }
     }
 }
