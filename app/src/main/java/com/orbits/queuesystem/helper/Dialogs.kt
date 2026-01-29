@@ -196,7 +196,7 @@ object Dialogs {
                     activity.getAllServiceFromDB()?.forEach { it?.isSelected = false }
                     activity.getAllServiceFromDB()?.get(value)?.isSelected = true
                     binding.edtCounterType.setText(activity.getAllServiceFromDB()?.get(value)?.serviceName)
-                    serviceId = activity.getAllServiceFromDB()?.get(value)?.id.asString()
+                    serviceId = activity.getAllServiceFromDB()?.get(value)?.entityID ?: ""
                     println("here is counter service id $serviceId")
                     println("here is counter type 111 ${activity.getAllServiceFromDB()?.get(value)?.serviceName}")
                 }
@@ -216,9 +216,13 @@ object Dialogs {
                     binding.edtCounterType.text.toString().isEmpty() -> {
                         Toast.makeText(activity, "Please select counter type", Toast.LENGTH_SHORT).show()
                     }
+                    serviceId.isEmpty() -> {
+                        // This shouldn't happen if counter type is selected, but just in case
+                        Toast.makeText(activity, "Please select counter type again", Toast.LENGTH_SHORT).show()
+                    }
                     else -> {
+                        Log.i("Dialogs", "Saving counter with serviceId: $serviceId")
                         addCounterDialog?.dismiss()
-                        Log.i("deepu", "showAddCounterDialog: $editCounterModel")
                         if (editCounterModel != null){
                             alertDialogInterface.onUpdateCounter(
                                 model = CounterListDataModel(

@@ -6,6 +6,11 @@
         android:name="android.hardware.camera"
         android:required="false" />
 
+    <!-- USB Host feature for FTDI hard keypad -->
+    <uses-feature
+        android:name="android.hardware.usb.host"
+        android:required="false" />
+
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
@@ -33,6 +38,10 @@
             android:name=".mvvm.voice.view.VoiceConfigurationActivity"
             android:exported="false" />
         <activity
+            android:name=".mvvm.ftdi.view.FTDIConsoleActivity"
+            android:exported="false"
+            android:launchMode="singleTop" />
+        <activity
             android:name=".mvvm.reset.view.ResetActivity"
             android:exported="false" />
         <activity
@@ -43,12 +52,19 @@
             android:exported="false" />
         <activity
             android:name=".mvvm.main.view.MainActivity"
-            android:exported="true" >
+            android:exported="true"
+            android:launchMode="singleTop" >
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+            <intent-filter>
+                <action android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED" />
+            </intent-filter>
+            <meta-data
+                android:name="android.hardware.usb.action.USB_DEVICE_ATTACHED"
+                android:resource="@xml/device_filter" />
         </activity>
 
         <service

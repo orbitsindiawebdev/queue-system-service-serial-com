@@ -2,6 +2,7 @@ package com.orbits.queuesystem.mvvm.main.view
 
 import NetworkMonitor
 import android.content.Intent
+import android.hardware.usb.UsbManager
 import android.os.Build
 import android.os.Bundle
 import android.speech.tts.TextToSpeech
@@ -75,7 +76,11 @@ import com.orbits.queuesystem.helper.database.LocalDB.updateCurrentDateTimeInDb
 import com.orbits.queuesystem.helper.database.LocalDB.updateLastDateTimeInDb
 import com.orbits.queuesystem.helper.database.LocalDB.updateResetDateTime
 import com.orbits.queuesystem.helper.database.TransactionDataDbModel
+import com.orbits.queuesystem.helper.server.FTDIBridge
+import com.orbits.queuesystem.helper.server.FTDIQueueOperations
+import com.orbits.queuesystem.helper.server.FTDISerialManager
 import com.orbits.queuesystem.mvvm.counters.view.CounterListActivity
+import com.orbits.queuesystem.mvvm.ftdi.view.FTDIConsoleActivity
 import com.orbits.queuesystem.mvvm.main.adapter.ServiceListAdapter
 import com.orbits.queuesystem.mvvm.main.model.DisplayListDataModel
 import com.orbits.queuesystem.mvvm.main.model.ServiceListDataModel
@@ -92,7 +97,7 @@ import java.util.Locale
 import java.util.Queue
 import java.util.concurrent.CopyOnWriteArrayList
 
-class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListener {
+class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListener, FTDIQueueOperations {
 
     companion object {
         // Shared client list accessible from other activities
@@ -126,6 +131,10 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     private val tokenQueue: Queue<Pair<String, CounterDataDbModel?>> = LinkedList()
     private var isSpeaking = false
 
+    /*----------------------------------------- FTDI Hard Keypad variables -----------------------------------------*/
+    // FTDI uses singleton pattern - connection persists across activities
+    /*----------------------------------------- FTDI Hard Keypad variables -----------------------------------------*/
+
 
     @RequiresApi(Build.VERSION_CODES.O)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -151,7 +160,48 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         initializeToolbar()
         initializeFields()
         onClickListeners()
+        initializeFTDI()
+        handleUsbIntent(intent)
 
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        handleUsbIntent(intent)
+    }
+
+    /**
+     * Handle USB device attachment intent.
+     */
+    private fun handleUsbIntent(intent: Intent) {
+        if (intent.action == UsbManager.ACTION_USB_DEVICE_ATTACHED) {
+            Log.d("MainActivity", "USB device attached via intent")
+            if (FTDISerialManager.isInitialized()) {
+                FTDISerialManager.getInstance().refreshDeviceList()
+                FTDISerialManager.getInstance().connectToFirstAvailable()
+            }
+        }
+    }
+
+    /**
+     * Initialize FTDI serial manager and bridge for hard keypad support.
+     * Uses singleton pattern for persistent connection across activities.
+     */
+    private fun initializeFTDI() {
+        // Initialize singletons if not already done
+        FTDISerialManager.init(this)
+        FTDIBridge.init(this)
+
+        // Set this activity as the queue operations handler
+        FTDIBridge.getInstance().setQueueOperations(this)
+
+        // Try to auto-connect if devices are available
+        val devices = FTDISerialManager.getInstance().refreshDeviceList()
+        if (devices.isNotEmpty() && !FTDISerialManager.getInstance().isConnected()) {
+            FTDISerialManager.getInstance().connectToFirstAvailable()
+        }
+
+        Log.d("MainActivity", "FTDI hard keypad support initialized (singleton)")
     }
 
     override fun onInit(status: Int) {
@@ -230,6 +280,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
         headerLayout.conVoiceConfig.setOnClickListener {
             val intent = Intent(this@MainActivity, VoiceConfigurationActivity::class.java)
+            startActivity(intent)
+        }
+
+        headerLayout.conFTDIConsole.setOnClickListener {
+            binding.drawerLayout.closeDrawers()
+            val intent = Intent(this@MainActivity, FTDIConsoleActivity::class.java)
             startActivity(intent)
         }
     }
@@ -967,6 +1023,36 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
     }
 
+    /**
+     * Update database for hard keypad request - sets startKeypadTime to current time.
+     * This is called when a hard keypad requests a token (NEXT or DIRECT_CALL).
+     */
+    private fun updateDbForHardKeypad(serviceId: String?, counterId: String?, sentModel: TransactionDataDbModel?) {
+        val currentTime = getCurrentTimeFormatted()
+        val changedDisplayModel = TransactionListDataModel(
+            id = sentModel?.id.asString(),
+            counterId = counterId,
+            serviceId = sentModel?.serviceId,
+            entityID = sentModel?.entityID,
+            serviceAssign = sentModel?.serviceAssign,
+            token = sentModel?.token,
+            ticketToken = sentModel?.ticketToken,
+            keypadToken = sentModel?.keypadToken,
+            issueTime = sentModel?.issueTime,
+            startKeypadTime = currentTime,  // Set startKeypadTime when hard keypad requests token
+            endKeypadTime = sentModel?.endKeypadTime,
+            status = "1"
+        )
+
+        if (sentModel != null) {
+            val changedDisplayDbModel = parseInTransactionDbModel(changedDisplayModel, changedDisplayModel.id ?: "")
+            Log.d("MainActivity", "Hard keypad token update - token: ${sentModel.token}, startKeypadTime: $currentTime")
+
+            // Update the database
+            addTransactionInDB(changedDisplayDbModel)
+        }
+    }
+
     private fun updateCounter(serviceId: String?, counterId: String?,sentModel: TransactionDataDbModel?){
         val changedDisplayModel = TransactionListDataModel(
             id = sentModel?.id.asString(),
@@ -1397,5 +1483,186 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     override fun onDestroy() {
         super.onDestroy()
         tcpServer?.stop()
+        // Note: We don't release FTDI singletons here - they persist for the app lifetime
+        // They will be released when the app process is destroyed
+    }
+
+    // ======================== FTDIQueueOperations Implementation ========================
+
+    /**
+     * Called when a hard keypad connects and is mapped to a counter.
+     */
+    override fun onHardKeypadConnected(ftdiAddress: String, counterId: String) {
+        runOnUiThread {
+            Log.d("MainActivity", "Hard keypad connected: address=$ftdiAddress, counter=$counterId")
+            Toast.makeText(this, "Hard Keypad Connected (Counter $counterId)", Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
+     * Called when hard keypad sends NEXT command - call the next token for that counter.
+     */
+    override fun onHardKeypadNext(counterId: String) {
+        Log.d("MainActivity", "Hard keypad NEXT for counter: $counterId")
+
+        val counterModel = getCounterFromDB(counterId)
+        if (counterModel == null) {
+            Log.w("MainActivity", "No counter found for id: $counterId")
+            return
+        }
+
+        val currentTransaction = getLastTransactionFromDbWithStatusOne(counterId)
+        if (currentTransaction != null) {
+            // Mark current transaction as completed (status = 2)
+            val completedModel = TransactionListDataModel(
+                id = currentTransaction.id?.toString(),
+                counterId = counterId,
+                serviceId = currentTransaction.serviceId,
+                entityID = currentTransaction.entityID,
+                serviceAssign = currentTransaction.serviceAssign,
+                token = currentTransaction.token,
+                ticketToken = currentTransaction.ticketToken,
+                keypadToken = currentTransaction.keypadToken,
+                issueTime = currentTransaction.issueTime,
+                startKeypadTime = currentTransaction.startKeypadTime,
+                endKeypadTime = getCurrentTimeFormatted(),
+                status = "2"
+            )
+            val dbModel = parseInTransactionDbModel(completedModel, completedModel.id ?: "")
+            addTransactionInDB(dbModel)
+        }
+
+        // Get next waiting token for this counter's service
+        val nextTransaction = getTransactionFromDbWithIssuedStatus(counterModel.serviceId)
+        if (nextTransaction != null) {
+            // Update status to in-progress (status = 1) with startKeypadTime
+            updateDbForHardKeypad(counterModel.serviceId, counterId, nextTransaction)
+
+            // Send display update to hard keypad
+            val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
+            if (FTDIBridge.isInitialized()) {
+                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, npw, nextTransaction.token ?: "000")
+            }
+
+            // Call the token via TTS
+            callTokens(nextTransaction.token ?: "", counterModel)
+
+            // Update any connected window displays
+            val json = JsonObject().apply {
+                addProperty("counterId", counterId)
+            }
+            sendDisplayData(json, counterModel, nextTransaction)
+
+            Log.d("MainActivity", "Hard keypad NEXT: called token ${nextTransaction.token} for counter $counterId")
+        } else {
+            // No more tokens waiting
+            if (FTDIBridge.isInitialized()) {
+                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, "000", "000")
+            }
+            Log.d("MainActivity", "Hard keypad NEXT: no tokens waiting for counter $counterId")
+        }
+    }
+
+    /**
+     * Called when hard keypad sends REPEAT command - repeat the last called token.
+     */
+    override fun onHardKeypadRepeat(counterId: String, tokenNo: String) {
+        Log.d("MainActivity", "Hard keypad REPEAT for counter: $counterId, token: $tokenNo")
+
+        val counterModel = getCounterFromDB(counterId)
+        if (counterModel == null) {
+            Log.w("MainActivity", "No counter found for id: $counterId")
+            return
+        }
+
+        val transaction = if (tokenNo.isNotEmpty() && tokenNo != "000") {
+            getTransactionByToken(tokenNo, counterModel.serviceId ?: "")
+        } else {
+            getLastTransactionFromDbWithStatusOne(counterId)
+        }
+
+        if (transaction != null) {
+            // Re-announce the token via TTS
+            callTokens(transaction.token ?: "", counterModel)
+
+            // Update connected window displays
+            val json = JsonObject().apply {
+                addProperty("counterId", counterId)
+            }
+            sendDisplayData(json, counterModel, transaction, true)
+
+            Log.d("MainActivity", "Hard keypad REPEAT: repeated token ${transaction.token} for counter $counterId")
+        } else {
+            Log.w("MainActivity", "Hard keypad REPEAT: no transaction found for token $tokenNo")
+        }
+    }
+
+    /**
+     * Called when hard keypad sends DIRECT_CALL command - call a specific token directly.
+     */
+    override fun onHardKeypadDirectCall(counterId: String, tokenNo: String) {
+        Log.d("MainActivity", "Hard keypad DIRECT_CALL for counter: $counterId, token: $tokenNo")
+
+        val counterModel = getCounterFromDB(counterId)
+        if (counterModel == null) {
+            Log.w("MainActivity", "No counter found for id: $counterId")
+            return
+        }
+
+        val transaction = getTransactionByToken(tokenNo, counterModel.serviceId ?: "")
+        if (transaction != null) {
+            // Mark any current in-progress transaction as completed
+            val currentTransaction = getLastTransactionFromDbWithStatusOne(counterId)
+            if (currentTransaction != null && currentTransaction.token != tokenNo) {
+                val completedModel = TransactionListDataModel(
+                    id = currentTransaction.id?.toString(),
+                    counterId = counterId,
+                    serviceId = currentTransaction.serviceId,
+                    entityID = currentTransaction.entityID,
+                    serviceAssign = currentTransaction.serviceAssign,
+                    token = currentTransaction.token,
+                    ticketToken = currentTransaction.ticketToken,
+                    keypadToken = currentTransaction.keypadToken,
+                    issueTime = currentTransaction.issueTime,
+                    startKeypadTime = currentTransaction.startKeypadTime,
+                    endKeypadTime = getCurrentTimeFormatted(),
+                    status = "2"
+                )
+                val dbModel = parseInTransactionDbModel(completedModel, completedModel.id ?: "")
+                addTransactionInDB(dbModel)
+            }
+
+            // Update the directly called token to in-progress with startKeypadTime
+            updateDbForHardKeypad(counterModel.serviceId, counterId, transaction)
+
+            // Send display update to hard keypad
+            val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
+            if (FTDIBridge.isInitialized()) {
+                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, npw, tokenNo)
+            }
+
+            // Call the token via TTS
+            callTokens(tokenNo, counterModel)
+
+            // Update connected window displays
+            val json = JsonObject().apply {
+                addProperty("counterId", counterId)
+            }
+            sendDisplayData(json, counterModel, transaction)
+
+            Log.d("MainActivity", "Hard keypad DIRECT_CALL: called token $tokenNo for counter $counterId")
+        } else {
+            Log.w("MainActivity", "Hard keypad DIRECT_CALL: token $tokenNo not found")
+        }
+    }
+
+    /**
+     * Called when a hard keypad disconnects from the bus.
+     */
+    override fun onHardKeypadDisconnected(ftdiAddress: String) {
+        runOnUiThread {
+            Log.d("MainActivity", "Hard keypad disconnected: address=$ftdiAddress")
+            Toast.makeText(this, "Hard Keypad Disconnected", Toast.LENGTH_SHORT).show()
+        }
     }
 }
