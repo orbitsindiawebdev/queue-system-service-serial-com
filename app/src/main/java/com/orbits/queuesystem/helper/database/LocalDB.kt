@@ -123,8 +123,23 @@ object LocalDB {
     }
 
     fun Context.getCounterFromDB(counterId: String?): CounterDataDbModel? {
+        if (counterId.isNullOrEmpty()) return null
         val db = AppDatabase.getAppDatabase(this).counterDao()
-        return db?.getCounterById(counterId ?: "")
+
+        // Try exact match first
+        var result = db?.getCounterById(counterId)
+
+        // If not found, search all counters and match flexibly (compare without leading zeros)
+        if (result == null) {
+            val allCounters = db?.getAllCounter()
+            result = allCounters?.find { counter ->
+                val dbCounterId = counter?.counterId ?: ""
+                // Match if normalized versions are equal (both trimmed of leading zeros)
+                dbCounterId.trimStart('0').ifEmpty { "0" } == counterId.trimStart('0').ifEmpty { "0" }
+            }
+        }
+
+        return result
     }
 
 
@@ -212,8 +227,23 @@ object LocalDB {
     }
 
     fun Context.getLastTransactionFromDbWithStatusOne(counterId: String?): TransactionDataDbModel? {
+        if (counterId.isNullOrEmpty()) return null
         val db = AppDatabase.getAppDatabase(this).transactionDao()
-        return db?.getLastTransactionByStatusOne(counterId ?: "")
+
+        // Try exact match first
+        var result = db?.getLastTransactionByStatusOne(counterId)
+
+        // If not found, search all transactions with status 1 and match flexibly
+        if (result == null) {
+            val allTransactions = db?.getAllTransaction()
+            result = allTransactions?.find { transaction ->
+                val dbCounterId = transaction?.counterId ?: ""
+                transaction?.status == "1" &&
+                dbCounterId.trimStart('0').ifEmpty { "0" } == counterId.trimStart('0').ifEmpty { "0" }
+            }
+        }
+
+        return result
     }
 
     fun Context.getTransactionByToken(token: String,serviceId: String): TransactionDataDbModel? {

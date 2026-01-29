@@ -43,7 +43,7 @@ object FTDIProtocol {
     const val CMD_DIRECT_CALL: Byte = 33 // '!' Chr(33) - Direct call specific token
     const val CMD_DISPLAY: Byte = 42    // '*' Chr(42) - Display data on keypad
     const val CMD_COUNTER_NPW: Byte = 44 // ',' Chr(44) - Counter NPW
-    const val CMD_MY_NPW: Byte = 44     // '9' Chr(44) - My NPW
+    const val CMD_MY_NPW: Byte = 57     // '9' Chr(57) - My NPW
 
     // Frame offsets
     private const val OFF_START = 0
@@ -98,52 +98,70 @@ object FTDIProtocol {
     }
 
     /**
+     * Convert counter ID to display format.
+     * Takes last 2 digits and puts them first, then appends "00".
+     * Example: "0008" -> last 2 digits "08" -> "0800"
+     * Example: "0012" -> last 2 digits "12" -> "1200"
+     */
+    fun toDisplayCounter(counterId: String): String {
+        val padded = counterId.padStart(4, '0').take(4)
+        val lastTwo = padded.takeLast(2)  // Get last 2 digits
+        return lastTwo + "00"              // Append "00"
+    }
+
+    /**
      * Build a display frame to send to keypad.
-     * Format: @[addr][0x00][0x2A][status][dataLen][NPW(3)+Counter(4)+Token(3)][0x0D]
+     * Format: @[displayAddr][0x00][0x2A][status][dataLen][NPW(3)+Counter(4)+Token(3)][0x0D]
+     *
+     * Note: Both address and counter are transformed for display - last 2 digits first, then "00"
+     * Example: address/counter "0008" becomes "0800" in the frame
      */
     fun buildDisplayFrame(address: String, npw: String, counter: String, token: String, statusByte: Int = 0): ByteArray {
-        val addrPad = address.padStart(4, '0').take(4)
+        val displayAddr = toDisplayCounter(address)     // Transform address for display (0008 -> 0800)
         val npwPad = npw.padStart(3, '0').take(3)
-        val counterPad = counter.padStart(4, '0').take(4)
+        val displayCounter = toDisplayCounter(counter)  // Transform counter for display
         val tokenPad = token.padStart(3, '0').take(3)
 
-        val data = npwPad + counterPad + tokenPad  // Total 10 bytes
+        val data = npwPad + displayCounter + tokenPad  // Total 10 bytes
         val dataLen = data.length
 
         val buf = mutableListOf<Byte>()
         buf.add(FRAME_START)                        // '@' start marker
-        buf.addAll(addrPad.toAsciiBytes())          // 4-digit address
+        buf.addAll(displayAddr.toAsciiBytes())      // 4-digit display address
         buf.add(SEPARATOR)                          // 0x00 separator
         buf.add(CMD_DISPLAY)                        // '*' Chr(42) Display
         buf.add(statusByte.toByte())                // status byte
         buf.add(dataLen.toByte())                   // data length
-        buf.addAll(data.toAsciiBytes())             // NPW + Counter + Token
+        buf.addAll(data.toAsciiBytes())             // NPW + DisplayCounter + Token
         buf.add(FRAME_END)                          // CR end marker
 
         val frame = buf.toByteArray()
         Log.d(TAG, "Built DISPLAY frame: ${frame.toHexString()}")
-        Log.d(TAG, "  -> addr=$addrPad, npw=$npwPad, counter=$counterPad, token=$tokenPad")
+        Log.d(TAG, "  -> addr=$address->$displayAddr, npw=$npwPad, counter=$counter->$displayCounter, token=$tokenPad")
         return frame
     }
 
     /**
      * Build CounterNPW frame (response with multiple counter NPW entries).
+     *
+     * Note: Both address and counter are transformed for display - last 2 digits first, then "00"
+     * Example: address/counter "0008" becomes "0800" in the frame
      */
     fun buildCounterNPWFrame(address: String, entries: List<Pair<String, String>>, statusByte: Int = 0): ByteArray {
-        val addrPad = address.padStart(4, '0').take(4)
+        val displayAddr = toDisplayCounter(address)  // Transform address for display
 
-        // Each entry: NPW(3) + Counter(4) + "000" = 10 chars
+        // Each entry: NPW(3) + DisplayCounter(4) + "000" = 10 chars
         val dataBuilder = StringBuilder()
         entries.forEach { (npw, counter) ->
             dataBuilder.append(npw.padStart(3, '0').take(3))
-            dataBuilder.append(counter.padStart(4, '0').take(4))
+            dataBuilder.append(toDisplayCounter(counter))  // Transform counter for display
             dataBuilder.append("000")
         }
         val data = dataBuilder.toString()
 
         val buf = mutableListOf<Byte>()
         buf.add(FRAME_START)
-        buf.addAll(addrPad.toAsciiBytes())
+        buf.addAll(displayAddr.toAsciiBytes())
         buf.add(SEPARATOR)
         buf.add(CMD_COUNTER_NPW)
         buf.add(statusByte.toByte())
@@ -156,24 +174,31 @@ object FTDIProtocol {
 
     /**
      * Build MyNPW frame.
+     * Format: @[displayAddr][0x00][0x39='9'][status][dataLen][NPW(3)+Counter(4)+"000"][0x0D]
+     *
+     * Note: Both address and counter are transformed for display - last 2 digits first, then "00"
+     * Example: address/counter "0008" becomes "0800" in the frame
      */
     fun buildMyNPWFrame(address: String, npw: String, counter: String, statusByte: Int = 0): ByteArray {
-        val addrPad = address.padStart(4, '0').take(4)
+        val displayAddr = toDisplayCounter(address)     // Transform address for display (0008 -> 0800)
         val npwPad = npw.padStart(3, '0').take(3)
-        val counterPad = counter.padStart(4, '0').take(4)
-        val data = npwPad + counterPad + "000"
+        val displayCounter = toDisplayCounter(counter)  // Transform counter for display
+        val data = npwPad + displayCounter + "000"
 
         val buf = mutableListOf<Byte>()
         buf.add(FRAME_START)
-        buf.addAll(addrPad.toAsciiBytes())
+        buf.addAll(displayAddr.toAsciiBytes())
         buf.add(SEPARATOR)
-        buf.add(CMD_MY_NPW)
+        buf.add(CMD_MY_NPW)                         // '9' Chr(57) - My NPW
         buf.add(statusByte.toByte())
         buf.add(data.length.toByte())
         buf.addAll(data.toAsciiBytes())
         buf.add(FRAME_END)
 
-        return buf.toByteArray()
+        val frame = buf.toByteArray()
+        Log.d(TAG, "Built MY_NPW frame: ${frame.toHexString()}")
+        Log.d(TAG, "  -> addr=$address->$displayAddr, npw=$npwPad, counter=$counter->$displayCounter, cmd=0x${"%02X".format(CMD_MY_NPW)}('9')")
+        return frame
     }
 
     /**

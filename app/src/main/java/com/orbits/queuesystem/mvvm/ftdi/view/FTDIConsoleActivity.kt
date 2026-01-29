@@ -365,7 +365,7 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
         appendLog("Queue: NEXT request from Counter $counterId")
         // In console mode, just send a test display response
         if (FTDIBridge.isInitialized()) {
-            FTDIBridge.getInstance().sendDisplayToKeypad(counterId, "005", "042")
+            FTDIBridge.getInstance().sendDisplayToKeypad(counterId, "000", "000")
         }
     }
 

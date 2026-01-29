@@ -1301,7 +1301,13 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             }
 
             // Filter displays matching the target counter
-            val matchingDisplays = arrListDisplays.filter { it?.counterId == targetCounterId }
+            // Compare by removing leading zeros from both sides to match flexibly
+            val matchingDisplays = arrListDisplays.filter { display ->
+                val displayCounterId = display?.counterId ?: ""
+                // Match if exact match, or if normalized versions match (compare without leading zeros)
+                displayCounterId == targetCounterId ||
+                displayCounterId.trimStart('0').ifEmpty { "0" } == targetCounterId.trimStart('0').ifEmpty { "0" }
+            }
 
             if (matchingDisplays.isNotEmpty()) {
                 println("sendDisplayData: Found ${matchingDisplays.size} display(s) for counterId=$targetCounterId")
@@ -1511,12 +1517,15 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             return
         }
 
-        val currentTransaction = getLastTransactionFromDbWithStatusOne(counterId)
+        // Use the counter's actual counterId from DB
+        val actualCounterId = counterModel.counterId ?: counterId
+
+        val currentTransaction = getLastTransactionFromDbWithStatusOne(actualCounterId)
         if (currentTransaction != null) {
             // Mark current transaction as completed (status = 2)
             val completedModel = TransactionListDataModel(
                 id = currentTransaction.id?.toString(),
-                counterId = counterId,
+                counterId = actualCounterId,
                 serviceId = currentTransaction.serviceId,
                 entityID = currentTransaction.entityID,
                 serviceAssign = currentTransaction.serviceAssign,
@@ -1536,29 +1545,49 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         val nextTransaction = getTransactionFromDbWithIssuedStatus(counterModel.serviceId)
         if (nextTransaction != null) {
             // Update status to in-progress (status = 1) with startKeypadTime
-            updateDbForHardKeypad(counterModel.serviceId, counterId, nextTransaction)
+            updateDbForHardKeypad(counterModel.serviceId, actualCounterId, nextTransaction)
 
-            // Send display update to hard keypad
             val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
-            if (FTDIBridge.isInitialized()) {
-                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, npw, nextTransaction.token ?: "000")
-            }
+            val token = nextTransaction.token ?: "000"
 
-            // Call the token via TTS
-            callTokens(nextTransaction.token ?: "", counterModel)
+            // Send MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY on background thread
+            Log.d("MainActivity", "Hard keypad NEXT: About to send response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
+            Thread {
+                Log.d("MainActivity", "Hard keypad NEXT: Background thread started. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
+                if (FTDIBridge.isInitialized()) {
+                    Log.d("MainActivity", "Hard keypad NEXT: Calling sendResponseToHardKeypad($actualCounterId, $npw, $token)")
+                    FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, npw, token)
+                    Log.d("MainActivity", "Hard keypad NEXT: sendResponseToHardKeypad completed")
+                } else {
+                    Log.w("MainActivity", "Hard keypad NEXT: FTDIBridge not initialized!")
+                }
+            }.start()
+
+            // Send to soft keypad (WebSocket client) if connected
+            sendMessageToWebSocketClient(
+                actualCounterId,
+                createServiceJsonDataWithTransaction(nextTransaction)
+            )
 
             // Update any connected window displays
             val json = JsonObject().apply {
-                addProperty("counterId", counterId)
+                addProperty("counterId", actualCounterId)
             }
             sendDisplayData(json, counterModel, nextTransaction)
 
-            Log.d("MainActivity", "Hard keypad NEXT: called token ${nextTransaction.token} for counter $counterId")
+            // Call the token via TTS
+            callTokens(token, counterModel)
+
+            Log.d("MainActivity", "Hard keypad NEXT: called token $token for counter $actualCounterId")
         } else {
-            // No more tokens waiting
-            if (FTDIBridge.isInitialized()) {
-                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, "000", "000")
-            }
+            // No more tokens waiting - send empty response to hard keypad IMMEDIATELY
+            Log.d("MainActivity", "Hard keypad NEXT: No tokens - About to send empty response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
+            Thread {
+                if (FTDIBridge.isInitialized()) {
+                    Log.d("MainActivity", "Hard keypad NEXT: Calling sendResponseToHardKeypad($actualCounterId, 000, 000)")
+                    FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, "000", "000")
+                }
+            }.start()
             Log.d("MainActivity", "Hard keypad NEXT: no tokens waiting for counter $counterId")
         }
     }
@@ -1575,23 +1604,48 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             return
         }
 
+        // Use the counter's actual counterId from DB to ensure proper matching
+        val actualCounterId = counterModel.counterId ?: counterId
+
         val transaction = if (tokenNo.isNotEmpty() && tokenNo != "000") {
             getTransactionByToken(tokenNo, counterModel.serviceId ?: "")
         } else {
-            getLastTransactionFromDbWithStatusOne(counterId)
+            getLastTransactionFromDbWithStatusOne(actualCounterId)
         }
 
         if (transaction != null) {
-            // Re-announce the token via TTS
-            callTokens(transaction.token ?: "", counterModel)
+            val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
+            val token = transaction.token ?: "000"
+
+            // Send MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY on background thread
+            Log.d("MainActivity", "Hard keypad REPEAT: About to send response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
+            Thread {
+                Log.d("MainActivity", "Hard keypad REPEAT: Background thread started")
+                if (FTDIBridge.isInitialized()) {
+                    Log.d("MainActivity", "Hard keypad REPEAT: Calling sendResponseToHardKeypad($actualCounterId, $npw, $token)")
+                    FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, npw, token)
+                    Log.d("MainActivity", "Hard keypad REPEAT: sendResponseToHardKeypad completed")
+                } else {
+                    Log.w("MainActivity", "Hard keypad REPEAT: FTDIBridge not initialized!")
+                }
+            }.start()
+
+            // Send to soft keypad (WebSocket client) if connected
+            sendMessageToWebSocketClient(
+                actualCounterId,
+                createServiceJsonDataWithTransactionForRepeat(transaction)
+            )
 
             // Update connected window displays
             val json = JsonObject().apply {
-                addProperty("counterId", counterId)
+                addProperty("counterId", actualCounterId)
             }
             sendDisplayData(json, counterModel, transaction, true)
 
-            Log.d("MainActivity", "Hard keypad REPEAT: repeated token ${transaction.token} for counter $counterId")
+            // Re-announce the token via TTS
+            callTokens(token, counterModel)
+
+            Log.d("MainActivity", "Hard keypad REPEAT: repeated token $token for counter $actualCounterId")
         } else {
             Log.w("MainActivity", "Hard keypad REPEAT: no transaction found for token $tokenNo")
         }
@@ -1601,22 +1655,28 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
      * Called when hard keypad sends DIRECT_CALL command - call a specific token directly.
      */
     override fun onHardKeypadDirectCall(counterId: String, tokenNo: String) {
-        Log.d("MainActivity", "Hard keypad DIRECT_CALL for counter: $counterId, token: $tokenNo")
+        Log.d("MainActivity", "=== onHardKeypadDirectCall ENTERED === counterId: $counterId, token: $tokenNo")
 
         val counterModel = getCounterFromDB(counterId)
+        Log.d("MainActivity", "onHardKeypadDirectCall: counterModel = $counterModel")
         if (counterModel == null) {
             Log.w("MainActivity", "No counter found for id: $counterId")
             return
         }
 
+        // Use the counter's actual counterId from DB
+        val actualCounterId = counterModel.counterId ?: counterId
+        Log.d("MainActivity", "onHardKeypadDirectCall: actualCounterId = $actualCounterId, serviceId = ${counterModel.serviceId}")
+
         val transaction = getTransactionByToken(tokenNo, counterModel.serviceId ?: "")
+        Log.d("MainActivity", "onHardKeypadDirectCall: transaction = $transaction")
         if (transaction != null) {
             // Mark any current in-progress transaction as completed
-            val currentTransaction = getLastTransactionFromDbWithStatusOne(counterId)
+            val currentTransaction = getLastTransactionFromDbWithStatusOne(actualCounterId)
             if (currentTransaction != null && currentTransaction.token != tokenNo) {
                 val completedModel = TransactionListDataModel(
                     id = currentTransaction.id?.toString(),
-                    counterId = counterId,
+                    counterId = actualCounterId,
                     serviceId = currentTransaction.serviceId,
                     entityID = currentTransaction.entityID,
                     serviceAssign = currentTransaction.serviceAssign,
@@ -1633,24 +1693,39 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             }
 
             // Update the directly called token to in-progress with startKeypadTime
-            updateDbForHardKeypad(counterModel.serviceId, counterId, transaction)
+            updateDbForHardKeypad(counterModel.serviceId, actualCounterId, transaction)
 
-            // Send display update to hard keypad
             val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
-            if (FTDIBridge.isInitialized()) {
-                FTDIBridge.getInstance().sendDisplayToKeypad(counterId, npw, tokenNo)
+
+            // Send MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY on background thread
+            Log.d("MainActivity", "Hard keypad DIRECT_CALL: About to send response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
+            Thread {
+                Log.d("MainActivity", "Hard keypad DIRECT_CALL: Background thread started")
+                if (FTDIBridge.isInitialized()) {
+                    Log.d("MainActivity", "Hard keypad DIRECT_CALL: Calling sendResponseToHardKeypad($actualCounterId, $npw, $tokenNo)")
+                    FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, npw, tokenNo)
+                    Log.d("MainActivity", "Hard keypad DIRECT_CALL: sendResponseToHardKeypad completed")
+                } else {
+                    Log.w("MainActivity", "Hard keypad DIRECT_CALL: FTDIBridge not initialized!")
+                }
+            }.start()
+
+            // Send to soft keypad (WebSocket client) if connected
+            sendMessageToWebSocketClient(
+                actualCounterId,
+                createServiceJsonDataWithTransaction(transaction)
+            )
+
+            // Update connected window displays
+            val json = JsonObject().apply {
+                addProperty("counterId", actualCounterId)
             }
+            sendDisplayData(json, counterModel, transaction)
 
             // Call the token via TTS
             callTokens(tokenNo, counterModel)
 
-            // Update connected window displays
-            val json = JsonObject().apply {
-                addProperty("counterId", counterId)
-            }
-            sendDisplayData(json, counterModel, transaction)
-
-            Log.d("MainActivity", "Hard keypad DIRECT_CALL: called token $tokenNo for counter $counterId")
+            Log.d("MainActivity", "Hard keypad DIRECT_CALL: called token $tokenNo for counter $actualCounterId")
         } else {
             Log.w("MainActivity", "Hard keypad DIRECT_CALL: token $tokenNo not found")
         }

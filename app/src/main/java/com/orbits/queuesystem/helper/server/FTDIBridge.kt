@@ -115,7 +115,8 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
      */
     fun setQueueOperations(operations: FTDIQueueOperations) {
         queueOperations = operations
-        Log.d(TAG, "Queue operations handler set")
+        Log.d(TAG, "Queue operations handler set: ${operations.javaClass.simpleName}")
+        notifyLog("Queue operations handler set: ${operations.javaClass.simpleName}")
     }
 
     /**
@@ -340,6 +341,67 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     }
 
     /**
+     * Send MyNPW frame to a keypad by counter ID.
+     */
+    fun sendMyNPWToKeypad(counterId: String, npw: String) {
+        val normalizedCounterId = counterId.padStart(4, '0').take(4)
+        val address = counterToAddressMap[normalizedCounterId] ?: FTDIProtocol.toFtdiAddress(normalizedCounterId)
+        val counter = FTDIProtocol.toFtdiAddress(normalizedCounterId)
+
+        sendMyNPW(address, npw, counter)
+    }
+
+    /**
+     * Send both MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY.
+     * This is used for NEXT, CALL, and REPEAT operations.
+     * Uses writeSync for immediate transmission without queue delay.
+     *
+     * @param counterId The counter ID
+     * @param npw Number of people waiting (3 digits)
+     * @param token Current token being called (3 digits)
+     */
+    fun sendResponseToHardKeypad(counterId: String, npw: String, token: String) {
+        Log.d(TAG, "sendResponseToHardKeypad called: counterId=$counterId, npw=$npw, token=$token")
+
+        val normalizedCounterId = counterId.padStart(4, '0').take(4)
+        val address = counterToAddressMap[normalizedCounterId] ?: FTDIProtocol.toFtdiAddress(normalizedCounterId)
+        val counter = FTDIProtocol.toFtdiAddress(normalizedCounterId)
+        val npwPad = npw.padStart(3, '0').take(3)
+        val tokenPad = token.padStart(3, '0').take(3)
+
+        Log.d(TAG, "sendResponseToHardKeypad: normalizedCounterId=$normalizedCounterId, address=$address, counterToAddressMap=$counterToAddressMap")
+
+        val isSerialInitialized = FTDISerialManager.isInitialized()
+        val isSerialConnected = if (isSerialInitialized) FTDISerialManager.getInstance().isConnected() else false
+
+        Log.d(TAG, "sendResponseToHardKeypad: isSerialInitialized=$isSerialInitialized, isSerialConnected=$isSerialConnected")
+        notifyLog("sendResponseToHardKeypad: counterId=$normalizedCounterId, initialized=$isSerialInitialized, connected=$isSerialConnected")
+
+        if (isSerialInitialized && isSerialConnected) {
+            // Send MY_NPW command first - use writeSync for immediate transmission
+            val myNpwFrame = FTDIProtocol.buildMyNPWFrame(address, npwPad, counter)
+            val myNpwResult = FTDISerialManager.getInstance().writeSync(myNpwFrame)
+            Log.d(TAG, "MY_NPW writeSync result: $myNpwResult")
+            notifyLog("TX: MY_NPW to $address -> npw=$npwPad counter=$counter (success=$myNpwResult)")
+
+            // Small delay between frames to ensure proper reception
+            Thread.sleep(30)
+
+            // Send DISPLAY command - use writeSync for immediate transmission
+            val displayFrame = FTDIProtocol.buildDisplayFrame(address, npwPad, counter, tokenPad)
+            val displayResult = FTDISerialManager.getInstance().writeSync(displayFrame)
+            Log.d(TAG, "DISPLAY writeSync result: $displayResult")
+            notifyLog("TX: DISPLAY to $address -> npw=$npwPad counter=$counter token=$tokenPad (success=$displayResult)")
+
+            notifyResponseSent(address, "MY_NPW + DISPLAY npw=$npwPad counter=$counter token=$tokenPad")
+            Log.d(TAG, "Sent MY_NPW + DISPLAY to $address: npw=$npwPad, counter=$counter, token=$tokenPad")
+        } else {
+            Log.w(TAG, "Cannot send response: FTDISerialManager not connected (initialized=$isSerialInitialized, connected=$isSerialConnected)")
+            notifyLog("TX FAILED: Not connected (initialized=$isSerialInitialized, connected=$isSerialConnected)")
+        }
+    }
+
+    /**
      * Broadcast display to ALL connected keypads.
      * Useful for announcements that should appear on all keypads.
      */
@@ -493,7 +555,17 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         keypadConnectionTimes[address] = System.currentTimeMillis()
 
         // Notify queue system to call next token
-        queueOperations?.onHardKeypadNext(counterId)
+        Log.d(TAG, "handleNext: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        notifyLog("handleNext: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        if (queueOperations != null) {
+            Log.d(TAG, "handleNext: Calling onHardKeypadNext($counterId)")
+            notifyLog("handleNext: Calling onHardKeypadNext($counterId)")
+            queueOperations?.onHardKeypadNext(counterId)
+            Log.d(TAG, "handleNext: onHardKeypadNext completed")
+        } else {
+            Log.e(TAG, "handleNext: queueOperations is NULL! Cannot notify MainActivity")
+            notifyLog("ERROR: queueOperations is NULL! Cannot notify MainActivity")
+        }
     }
 
     private fun handleRepeat(command: FTDIProtocol.ParsedCommand.Repeat) {
@@ -517,7 +589,17 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         keypadConnectionTimes[address] = System.currentTimeMillis()
 
         // Notify queue system to repeat token
-        queueOperations?.onHardKeypadRepeat(counterId, tokenNo)
+        Log.d(TAG, "handleRepeat: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        notifyLog("handleRepeat: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        if (queueOperations != null) {
+            Log.d(TAG, "handleRepeat: Calling onHardKeypadRepeat($counterId, $tokenNo)")
+            notifyLog("handleRepeat: Calling onHardKeypadRepeat($counterId, $tokenNo)")
+            queueOperations?.onHardKeypadRepeat(counterId, tokenNo)
+            Log.d(TAG, "handleRepeat: onHardKeypadRepeat completed")
+        } else {
+            Log.e(TAG, "handleRepeat: queueOperations is NULL! Cannot notify MainActivity")
+            notifyLog("ERROR: queueOperations is NULL! Cannot notify MainActivity")
+        }
     }
 
     private fun handleDirectCall(command: FTDIProtocol.ParsedCommand.DirectCall) {
@@ -541,7 +623,17 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         keypadConnectionTimes[address] = System.currentTimeMillis()
 
         // Notify queue system to call specific token
-        queueOperations?.onHardKeypadDirectCall(counterId, tokenNo)
+        Log.d(TAG, "handleDirectCall: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        notifyLog("handleDirectCall: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
+        if (queueOperations != null) {
+            Log.d(TAG, "handleDirectCall: Calling onHardKeypadDirectCall($counterId, $tokenNo)")
+            notifyLog("handleDirectCall: Calling onHardKeypadDirectCall($counterId, $tokenNo)")
+            queueOperations?.onHardKeypadDirectCall(counterId, tokenNo)
+            Log.d(TAG, "handleDirectCall: onHardKeypadDirectCall completed")
+        } else {
+            Log.e(TAG, "handleDirectCall: queueOperations is NULL! Cannot notify MainActivity")
+            notifyLog("ERROR: queueOperations is NULL! Cannot notify MainActivity")
+        }
     }
 
     private fun handleDisplayResponse(command: FTDIProtocol.ParsedCommand.Display) {
