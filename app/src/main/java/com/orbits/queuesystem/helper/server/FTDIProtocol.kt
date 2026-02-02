@@ -189,7 +189,7 @@ object FTDIProtocol {
         buf.add(FRAME_START)
         buf.addAll(displayAddr.toAsciiBytes())
         buf.add(SEPARATOR)
-        buf.add(CMD_MY_NPW)                         // '9' Chr(57) - My NPW
+        buf.add(CMD_COUNTER_NPW)                         // ',' Chr(44) - Counter NPW
         buf.add(statusByte.toByte())
         buf.add(data.length.toByte())
         buf.addAll(data.toAsciiBytes())
