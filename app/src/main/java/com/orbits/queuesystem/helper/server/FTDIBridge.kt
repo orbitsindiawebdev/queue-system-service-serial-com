@@ -63,6 +63,9 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     private val addressToCounterMap = mutableMapOf<String, String>()
     private val counterToAddressMap = mutableMapOf<String, String>()
 
+    // Map of counter IDs to service IDs - for broadcasting NPW updates
+    private val counterToServiceMap = mutableMapOf<String, String>()
+
     // Track keypad connection times for debugging
     private val keypadConnectionTimes = mutableMapOf<String, Long>()
 
@@ -190,11 +193,38 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         val counterId = addressToCounterMap.remove(normalizedAddress)
         if (counterId != null) {
             counterToAddressMap.remove(counterId)
+            counterToServiceMap.remove(counterId)
             keypadConnectionTimes.remove(normalizedAddress)
             Log.d(TAG, "Removed keypad mapping: $normalizedAddress -> $counterId")
             Log.d(TAG, "Remaining connected keypads: ${addressToCounterMap.size}")
             notifyKeypadCountChanged()
         }
+    }
+
+    /**
+     * Update the service ID for a counter.
+     * This is used to track which service each keypad/counter belongs to.
+     */
+    fun updateCounterService(counterId: String, serviceId: String) {
+        val normalizedCounterId = counterId.padStart(4, '0').take(4)
+        counterToServiceMap[normalizedCounterId] = serviceId
+        Log.d(TAG, "Updated counter $normalizedCounterId -> service $serviceId")
+        Log.d(TAG, "Counter to service map: $counterToServiceMap")
+    }
+
+    /**
+     * Get service ID for a counter.
+     */
+    fun getServiceForCounter(counterId: String): String? {
+        val normalizedCounterId = counterId.padStart(4, '0').take(4)
+        return counterToServiceMap[normalizedCounterId]
+    }
+
+    /**
+     * Get all counter IDs for a given service.
+     */
+    fun getCountersForService(serviceId: String): List<String> {
+        return counterToServiceMap.filter { it.value == serviceId }.keys.toList()
     }
 
     /**
@@ -443,6 +473,54 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         }
     }
 
+    /**
+     * Broadcast updated NPW count to all hard keypads of the same service.
+     * This is called when any counter performs a Call or Next operation.
+     *
+     * @param serviceId The service ID to broadcast to
+     * @param npw The updated NPW count (Number of People Waiting)
+     * @param excludeCounterId Optional counter ID to exclude from broadcast (the one that triggered the action)
+     */
+    fun broadcastNpwToService(serviceId: String, npw: String, excludeCounterId: String? = null) {
+        if (!FTDISerialManager.isInitialized() || !FTDISerialManager.getInstance().isConnected()) {
+            Log.w(TAG, "Cannot broadcast NPW: FTDISerialManager not connected")
+            return
+        }
+
+        val normalizedExcludeId = excludeCounterId?.padStart(4, '0')?.take(4)
+        val countersForService = getCountersForService(serviceId)
+
+        Log.d(TAG, "Broadcasting NPW=$npw to service $serviceId, counters: $countersForService, excluding: $normalizedExcludeId")
+        notifyLog("Broadcasting NPW=$npw to service $serviceId (${countersForService.size} keypads)")
+
+        var broadcastCount = 0
+        countersForService.forEach { counterId ->
+            // Skip the counter that triggered the action
+            if (counterId == normalizedExcludeId) {
+                Log.d(TAG, "Skipping counter $counterId (triggered the action)")
+                return@forEach
+            }
+
+            val address = counterToAddressMap[counterId]
+            if (address != null) {
+                // Send MY_NPW frame to update the NPW display
+                val frame = FTDIProtocol.buildMyNPWFrame(address, npw.padStart(3, '0').take(3), counterId)
+                FTDISerialManager.getInstance().writeSync(frame)
+                notifyLog("TX: NPW BROADCAST to $address (counter $counterId) -> npw=$npw")
+                Log.d(TAG, "Sent NPW broadcast to counter $counterId (addr=$address): npw=$npw")
+                broadcastCount++
+
+                // Small delay between frames
+                Thread.sleep(20)
+            } else {
+                Log.w(TAG, "No address found for counter $counterId")
+            }
+        }
+
+        Log.d(TAG, "NPW broadcast complete: sent to $broadcastCount keypad(s)")
+        notifyLog("NPW broadcast complete: sent to $broadcastCount keypad(s)")
+    }
+
     // ==================== FTDISerialEventListener Implementation ====================
 
     override fun onDeviceConnected(deviceName: String) {
@@ -481,7 +559,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         notifyLog("RX FRAME: ${FTDIProtocol.run { frame.toHexString() }}")
 
         val parsedCommand = FTDIProtocol.parseIncomingFrame(frame)
-
+        Log.d(TAG, "Frame received: $parsedCommand")
         when (parsedCommand) {
             is FTDIProtocol.ParsedCommand.Connect -> handleConnect(parsedCommand)
             is FTDIProtocol.ParsedCommand.Next -> handleNext(parsedCommand)
@@ -525,6 +603,16 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         // Map this address to the counter
         mapAddressToCounter(address, counterId)
 
+        // Get and store the service ID for this counter (for NPW broadcasting)
+        val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+        if (!serviceId.isNullOrEmpty()) {
+            updateCounterService(counterId, serviceId)
+            Log.d(TAG, "Counter $counterId mapped to service $serviceId")
+            notifyLog("Counter $counterId -> Service $serviceId")
+        } else {
+            Log.w(TAG, "No service ID found for counter $counterId")
+        }
+
         // Notify queue system
         queueOperations?.onHardKeypadConnected(address, counterId)
         notifyKeypadConnected(address, counterId)
@@ -547,8 +635,23 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         if (!addressToCounterMap.containsKey(address)) {
             Log.w(TAG, "Keypad $address not registered, auto-registering...")
             mapAddressToCounter(address, counterId)
+
+            // Also get and store service ID
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
+
             queueOperations?.onHardKeypadConnected(address, counterId)
             notifyKeypadConnected(address, counterId)
+        }
+
+        // Ensure service mapping exists even if address was already registered
+        if (!counterToServiceMap.containsKey(counterId.padStart(4, '0').take(4))) {
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
         }
 
         // Update last activity time
@@ -581,8 +684,23 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         if (!addressToCounterMap.containsKey(address)) {
             Log.w(TAG, "Keypad $address not registered, auto-registering...")
             mapAddressToCounter(address, counterId)
+
+            // Also get and store service ID
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
+
             queueOperations?.onHardKeypadConnected(address, counterId)
             notifyKeypadConnected(address, counterId)
+        }
+
+        // Ensure service mapping exists even if address was already registered
+        if (!counterToServiceMap.containsKey(counterId.padStart(4, '0').take(4))) {
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
         }
 
         // Update last activity time
@@ -606,7 +724,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         val address = command.address
         val counterId = addressToCounterMap[address] ?: FTDIProtocol.toCounterId(address)
         val tokenNo = command.tokenNo
-
+        Log.d(TAG, "Counter to service map0: $counterToServiceMap  $keypadConnectionTimes")
         Log.d(TAG, "DirectCall from address: $address, counterId: $counterId, token: $tokenNo  map: $addressToCounterMap")
         notifyCommandReceived(address, "DIRECT_CALL", "counterId=$counterId, token=$tokenNo")
         notifyLog("RX: DIRECT_CALL from $address -> Counter $counterId, Token $tokenNo")
@@ -615,13 +733,28 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         if (!addressToCounterMap.containsKey(address)) {
             Log.w(TAG, "Keypad $address not registered, auto-registering...")
             mapAddressToCounter(address, counterId)
+
+            // Also get and store service ID
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
+
             queueOperations?.onHardKeypadConnected(address, counterId)
             notifyKeypadConnected(address, counterId)
         }
 
+        // Ensure service mapping exists even if address was already registered
+        if (!counterToServiceMap.containsKey(counterId.padStart(4, '0').take(4))) {
+            val serviceId = queueOperations?.getServiceIdForCounter(counterId)
+            if (!serviceId.isNullOrEmpty()) {
+                updateCounterService(counterId, serviceId)
+            }
+        }
+
         // Update last activity time
         keypadConnectionTimes[address] = System.currentTimeMillis()
-
+        Log.d(TAG, "Counter to service map0: $counterToServiceMap  $keypadConnectionTimes")
         // Notify queue system to call specific token
         Log.d(TAG, "handleDirectCall: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
         notifyLog("handleDirectCall: queueOperations is ${if (queueOperations != null) "SET" else "NULL"}")
@@ -704,4 +837,10 @@ interface FTDIQueueOperations {
     fun onHardKeypadRepeat(counterId: String, tokenNo: String)
     fun onHardKeypadDirectCall(counterId: String, tokenNo: String)
     fun onHardKeypadDisconnected(ftdiAddress: String)
+
+    /**
+     * Get the service ID for a given counter ID.
+     * Used for NPW broadcasting to keypads of the same service.
+     */
+    fun getServiceIdForCounter(counterId: String): String?
 }

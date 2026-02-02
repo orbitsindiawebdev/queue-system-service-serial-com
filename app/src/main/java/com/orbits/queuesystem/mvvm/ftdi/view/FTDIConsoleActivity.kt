@@ -381,6 +381,11 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
         appendLog("Queue: Keypad $ftdiAddress disconnected")
     }
 
+    override fun getServiceIdForCounter(counterId: String): String? {
+        appendLog("Queue: getServiceIdForCounter ")
+        return null
+    }
+
     // ==================== Lifecycle ====================
 
     override fun onDestroy() {

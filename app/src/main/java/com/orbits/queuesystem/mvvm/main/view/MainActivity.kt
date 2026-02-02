@@ -545,6 +545,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     println("Display registered (Reconnection): id=$displayId, counterId=$counterId, total displays=${arrListDisplays.size}")
                 },
                 onFailure = { e ->
+                    Log.e("MainActivity", "Display registration (Reconnection) failed: id=$displayId, error=${e.message}")
                     println("Error: ${e.message}")
                     // Handle failure, such as logging or notifying the user
                 }
@@ -598,6 +599,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     println("Display registered: id=$displayId, counterId=$counterId, total displays=${arrListDisplays.size}")
                 },
                 onFailure = { e ->
+                    Log.e("MainActivity", "Display registration failed: id=$displayId, error=${e.message}")
                     println("Error: ${e.message}")
                     // Handle failure, such as logging or notifying the user
                 }
@@ -1165,12 +1167,13 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
     private fun sendMessageToWebSocketClient(clientId: String, jsonObject: JsonObject) {
         try {
+            println("here is new 2220 $clientId $jsonObject")
             // this method to get client handler used in server
             val clientHandler = TCPServer.WebSocketManager.getClientHandler(clientId)
             if (clientHandler != null && clientHandler.isWebSocket) {
                 Thread {
                     val jsonMessage = gson.toJson(jsonObject)
-                    println("here is new 222 $clientId")
+                    println("here is new 222 $clientId $jsonObject")
                     clientHandler.sendMessageToClient(clientId, jsonMessage)
                 }.start()
                 // Optionally handle success or error
@@ -1191,7 +1194,9 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         try {
             // this method to get client handler used in server
             val clientHandler = TCPServer.WebSocketManager.getClientHandler(clientId)
-            if (clientHandler != null && clientHandler.isWebSocket) {
+            Log.d("MainActivity", "sendMessageToWebSocketClientWith: clientId=$clientId, clientHandler=${clientHandler != null}, isWebSocket=${clientHandler?.isWebSocket}")
+
+            if (clientHandler != null) {
                 Thread {
                     try {
                         val jsonMessage = gson.toJson(jsonObject)
@@ -1200,15 +1205,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         onSuccess() // when client is connected the success block is sent and based on that next functions are called
                     } catch (e: Exception) {
                         // Call the failure callback in case of an exception
+                        Log.e("MainActivity", "sendMessageToWebSocketClientWith: Failed to send to $clientId", e)
                         onFailure(e)
                     }
                 }.start()
             } else {
-                // Handle case where clientHandler is not found or not a WebSocket client
-                onFailure(Exception("Client handler is null or not a WebSocket client"))
+                // Handle case where clientHandler is not found
+                Log.w("MainActivity", "sendMessageToWebSocketClientWith: Client handler not found for $clientId")
+                onFailure(Exception("Client handler is null for clientId: $clientId"))
             }
         } catch (e: Exception) {
             // Call the failure callback if there's an error outside the thread
+            Log.e("MainActivity", "sendMessageToWebSocketClientWith: Exception", e)
             onFailure(e)
         }
     }
@@ -1497,10 +1505,12 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
 
     /**
      * Called when a hard keypad connects and is mapped to a counter.
+     * Note: Service mapping is handled in FTDIBridge via getServiceIdForCounter() callback.
      */
     override fun onHardKeypadConnected(ftdiAddress: String, counterId: String) {
+        Log.d("MainActivity", "Hard keypad connected: address=$ftdiAddress, counter=$counterId")
+
         runOnUiThread {
-            Log.d("MainActivity", "Hard keypad connected: address=$ftdiAddress, counter=$counterId")
             Toast.makeText(this, "Hard Keypad Connected (Counter $counterId)", Toast.LENGTH_SHORT).show()
         }
     }
@@ -1551,6 +1561,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             val token = nextTransaction.token ?: "000"
 
             // Send MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY on background thread
+            // Also broadcast NPW update to all other keypads of the same service
+            val serviceIdForBroadcast = counterModel.serviceId ?: ""
             Log.d("MainActivity", "Hard keypad NEXT: About to send response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
             Thread {
                 Log.d("MainActivity", "Hard keypad NEXT: Background thread started. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
@@ -1558,6 +1570,11 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     Log.d("MainActivity", "Hard keypad NEXT: Calling sendResponseToHardKeypad($actualCounterId, $npw, $token)")
                     FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, npw, token)
                     Log.d("MainActivity", "Hard keypad NEXT: sendResponseToHardKeypad completed")
+
+                    // Broadcast NPW update to all other keypads of the same service
+                    if (serviceIdForBroadcast.isNotEmpty()) {
+                        FTDIBridge.getInstance().broadcastNpwToService(serviceIdForBroadcast, npw, actualCounterId)
+                    }
                 } else {
                     Log.w("MainActivity", "Hard keypad NEXT: FTDIBridge not initialized!")
                 }
@@ -1581,11 +1598,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             Log.d("MainActivity", "Hard keypad NEXT: called token $token for counter $actualCounterId")
         } else {
             // No more tokens waiting - send empty response to hard keypad IMMEDIATELY
+            // Also broadcast NPW=0 to all other keypads of the same service
+            val serviceIdForBroadcast = counterModel.serviceId ?: ""
             Log.d("MainActivity", "Hard keypad NEXT: No tokens - About to send empty response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
             Thread {
                 if (FTDIBridge.isInitialized()) {
                     Log.d("MainActivity", "Hard keypad NEXT: Calling sendResponseToHardKeypad($actualCounterId, 000, 000)")
                     FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, "000", "000")
+
+                    // Broadcast NPW=0 to all other keypads of the same service
+                    if (serviceIdForBroadcast.isNotEmpty()) {
+                        FTDIBridge.getInstance().broadcastNpwToService(serviceIdForBroadcast, "000", actualCounterId)
+                    }
                 }
             }.start()
             Log.d("MainActivity", "Hard keypad NEXT: no tokens waiting for counter $counterId")
@@ -1698,6 +1722,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             val npw = getAllTransactionCount(counterModel.serviceId ?: "")?.size?.toString() ?: "0"
 
             // Send MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY on background thread
+            // Also broadcast NPW update to all other keypads of the same service
+            val serviceIdForBroadcast = counterModel.serviceId ?: ""
             Log.d("MainActivity", "Hard keypad DIRECT_CALL: About to send response. FTDIBridge.isInitialized()=${FTDIBridge.isInitialized()}")
             Thread {
                 Log.d("MainActivity", "Hard keypad DIRECT_CALL: Background thread started")
@@ -1705,6 +1731,11 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                     Log.d("MainActivity", "Hard keypad DIRECT_CALL: Calling sendResponseToHardKeypad($actualCounterId, $npw, $tokenNo)")
                     FTDIBridge.getInstance().sendResponseToHardKeypad(actualCounterId, npw, tokenNo)
                     Log.d("MainActivity", "Hard keypad DIRECT_CALL: sendResponseToHardKeypad completed")
+
+                    // Broadcast NPW update to all other keypads of the same service
+                    if (serviceIdForBroadcast.isNotEmpty()) {
+                        FTDIBridge.getInstance().broadcastNpwToService(serviceIdForBroadcast, npw, actualCounterId)
+                    }
                 } else {
                     Log.w("MainActivity", "Hard keypad DIRECT_CALL: FTDIBridge not initialized!")
                 }
@@ -1739,5 +1770,16 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             Log.d("MainActivity", "Hard keypad disconnected: address=$ftdiAddress")
             Toast.makeText(this, "Hard Keypad Disconnected", Toast.LENGTH_SHORT).show()
         }
+    }
+
+    /**
+     * Get the service ID for a given counter ID.
+     * Used by FTDIBridge for NPW broadcasting to keypads of the same service.
+     */
+    override fun getServiceIdForCounter(counterId: String): String? {
+        val counterModel = getCounterFromDB(counterId)
+        val serviceId = counterModel?.serviceId
+        Log.d("MainActivity", "getServiceIdForCounter: counterId=$counterId -> serviceId=$serviceId")
+        return serviceId
     }
 }
