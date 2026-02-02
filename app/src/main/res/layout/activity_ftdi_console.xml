@@ -22,9 +22,9 @@
             app:layout_constraintStart_toStartOf="parent"
             app:layout_constraintTop_toTopOf="parent" />
 
-        <!-- Connection Status Card -->
+        <!-- Summary Card -->
         <androidx.cardview.widget.CardView
-            android:id="@+id/cardConnectionStatus"
+            android:id="@+id/cardSummary"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/_12sdp"
@@ -39,97 +39,68 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:orientation="vertical"
-                android:padding="@dimen/_12sdp">
+                android:padding="@dimen/_16sdp">
 
-                <!-- Connection Status Row -->
+                <!-- Status Summary Row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
-                    <View
-                        android:id="@+id/viewConnectionIndicator"
-                        android:layout_width="@dimen/_12sdp"
-                        android:layout_height="@dimen/_12sdp"
-                        android:background="@drawable/circle_red" />
-
-                    <TextView
-                        android:id="@+id/txtConnectionStatus"
+                    <LinearLayout
                         android:layout_width="0dp"
                         android:layout_height="wrap_content"
-                        android:layout_marginStart="@dimen/_8sdp"
                         android:layout_weight="1"
-                        android:text="Disconnected"
-                        android:textColor="@color/txt_color_primary"
-                        android:textSize="@dimen/_14ssp"
-                        android:textStyle="bold" />
+                        android:orientation="vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Hard Keypad Manager"
+                            android:textColor="@color/txt_color_primary"
+                            android:textSize="@dimen/_16ssp"
+                            android:textStyle="bold" />
+
+                        <TextView
+                            android:id="@+id/txtSummaryStatus"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:layout_marginTop="@dimen/_4sdp"
+                            android:text="0 USB devices • 0 keypads connected"
+                            android:textColor="@color/txt_color_secondary"
+                            android:textSize="@dimen/_12ssp" />
+
+                    </LinearLayout>
 
                     <Button
-                        android:id="@+id/btnRefreshDevices"
+                        android:id="@+id/btnScanDevices"
                         android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:minHeight="@dimen/_36sdp"
-                        android:text="Refresh"
-                        android:textSize="@dimen/_12ssp" />
-
-                </LinearLayout>
-
-                <!-- Connected Keypads Info -->
-                <TextView
-                    android:id="@+id/txtConnectedKeypads"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_4sdp"
-                    android:text="Keypads: None"
-                    android:textColor="@color/txt_color_secondary"
-                    android:textSize="@dimen/_11ssp"
-                    android:visibility="gone" />
-
-                <!-- Device Spinner -->
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_8sdp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Device:"
-                        android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_12ssp" />
-
-                    <Spinner
-                        android:id="@+id/spinnerDevices"
-                        android:layout_width="0dp"
                         android:layout_height="@dimen/_40sdp"
-                        android:layout_marginStart="@dimen/_8sdp"
-                        android:layout_weight="1"
-                        android:background="@drawable/spinner_bg" />
+                        android:text="Scan"
+                        android:textSize="@dimen/_12ssp" />
 
                 </LinearLayout>
 
-                <!-- Baud Rate and Auto-Reconnect -->
+                <!-- Settings Row -->
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_8sdp"
+                    android:layout_marginTop="@dimen/_12sdp"
                     android:gravity="center_vertical"
                     android:orientation="horizontal">
 
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Baud:"
+                        android:text="Baud Rate:"
                         android:textColor="@color/txt_color_secondary"
                         android:textSize="@dimen/_12ssp" />
 
                     <Spinner
                         android:id="@+id/spinnerBaudRate"
-                        android:layout_width="@dimen/_90sdp"
-                        android:layout_height="@dimen/_40sdp"
+                        android:layout_width="@dimen/_100sdp"
+                        android:layout_height="@dimen/_36sdp"
                         android:layout_marginStart="@dimen/_8sdp"
                         android:background="@drawable/spinner_bg" />
 
@@ -141,9 +112,9 @@
                     <TextView
                         android:layout_width="wrap_content"
                         android:layout_height="wrap_content"
-                        android:text="Auto:"
+                        android:text="Auto Connect:"
                         android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_10ssp" />
+                        android:textSize="@dimen/_11ssp" />
 
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/switchAutoReconnect"
@@ -154,199 +125,176 @@
 
                 </LinearLayout>
 
-                <!-- Connect Button -->
-                <Button
-                    android:id="@+id/btnConnect"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_8sdp"
-                    android:minHeight="@dimen/_40sdp"
-                    android:text="Connect"
-                    android:textSize="@dimen/_14ssp"
-                    android:textStyle="bold" />
-
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
 
-        <!-- Console Output -->
-        <androidx.cardview.widget.CardView
-            android:id="@+id/cardConsole"
+        <!-- Section Title -->
+        <TextView
+            android:id="@+id/txtDevicesTitle"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="@dimen/_16sdp"
+            android:layout_marginTop="@dimen/_16sdp"
+            android:text="Available USB Devices"
+            android:textColor="@color/txt_color_primary"
+            android:textSize="@dimen/_14ssp"
+            android:textStyle="bold"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/cardSummary" />
+
+        <!-- Devices List -->
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/recyclerDevices"
             android:layout_width="match_parent"
             android:layout_height="0dp"
             android:layout_marginHorizontal="@dimen/_12sdp"
-            android:layout_marginTop="@dimen/_12sdp"
-            app:cardCornerRadius="@dimen/_8sdp"
-            app:cardElevation="@dimen/_4sdp"
-            app:layout_constraintBottom_toTopOf="@id/cardSendFrame"
+            android:layout_marginTop="@dimen/_8sdp"
+            android:layout_marginBottom="@dimen/_12sdp"
+            android:clipToPadding="false"
+            android:paddingBottom="@dimen/_8sdp"
+            app:layout_constraintBottom_toBottomOf="parent"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
-            app:layout_constraintTop_toBottomOf="@id/cardConnectionStatus">
+            app:layout_constraintTop_toBottomOf="@id/cardWarning" />
 
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical">
-
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal"
-                    android:padding="@dimen/_8sdp">
-
-                    <TextView
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_weight="1"
-                        android:text="Console Log"
-                        android:textColor="@color/txt_color_primary"
-                        android:textSize="@dimen/_14ssp"
-                        android:textStyle="bold" />
-
-                    <Button
-                        android:id="@+id/btnClearLog"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:minHeight="@dimen/_32sdp"
-                        android:text="Clear"
-                        android:textSize="@dimen/_10ssp" />
-
-                </LinearLayout>
-
-                <View
-                    android:layout_width="match_parent"
-                    android:layout_height="1dp"
-                    android:background="@color/app_color" />
-
-                <ScrollView
-                    android:id="@+id/scrollConsole"
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent"
-                    android:fillViewport="true">
-
-                    <TextView
-                        android:id="@+id/txtConsoleLog"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:background="#1A1A1A"
-                        android:fontFamily="monospace"
-                        android:padding="@dimen/_8sdp"
-                        android:textColor="#00FF00"
-                        android:textSize="@dimen/_10ssp" />
-
-                </ScrollView>
-
-            </LinearLayout>
-
-        </androidx.cardview.widget.CardView>
-
-        <!-- Send Frame Card -->
+        <!-- Warning Card (for USB hub issues) -->
         <androidx.cardview.widget.CardView
-            android:id="@+id/cardSendFrame"
+            android:id="@+id/cardWarning"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:layout_marginHorizontal="@dimen/_12sdp"
-            android:layout_marginVertical="@dimen/_12sdp"
+            android:layout_marginTop="@dimen/_8sdp"
+            android:visibility="gone"
+            app:cardBackgroundColor="@color/orange_bg_light"
             app:cardCornerRadius="@dimen/_8sdp"
-            app:cardElevation="@dimen/_4sdp"
-            app:layout_constraintBottom_toBottomOf="parent"
+            app:cardElevation="@dimen/_2sdp"
             app:layout_constraintEnd_toEndOf="parent"
-            app:layout_constraintStart_toStartOf="parent">
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/txtDevicesTitle">
 
             <LinearLayout
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
+                android:gravity="center_vertical"
+                android:orientation="horizontal"
                 android:padding="@dimen/_12sdp">
 
+                <ImageView
+                    android:layout_width="@dimen/_24sdp"
+                    android:layout_height="@dimen/_24sdp"
+                    android:src="@drawable/ic_warning"
+                    app:tint="@color/orange_color" />
+
                 <TextView
-                    android:layout_width="wrap_content"
+                    android:id="@+id/txtWarningMessage"
+                    android:layout_width="0dp"
                     android:layout_height="wrap_content"
-                    android:text="Test Frame"
-                    android:textColor="@color/txt_color_primary"
-                    android:textSize="@dimen/_12ssp"
-                    android:textStyle="bold" />
+                    android:layout_marginStart="@dimen/_8sdp"
+                    android:layout_weight="1"
+                    android:text="USB hub error detected. Use a powered USB hub for multiple devices."
+                    android:textColor="@color/orange_color"
+                    android:textSize="@dimen/_11ssp" />
 
-                <LinearLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_8sdp"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:text="Addr:"
-                        android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_10ssp" />
-
-                    <EditText
-                        android:id="@+id/edtAddress"
-                        android:layout_width="@dimen/_60sdp"
-                        android:layout_height="@dimen/_36sdp"
-                        android:layout_marginStart="@dimen/_4sdp"
-                        android:background="@drawable/edit_text_bg"
-                        android:hint="0001"
-                        android:inputType="number"
-                        android:maxLength="4"
-                        android:padding="@dimen/_4sdp"
-                        android:textSize="@dimen/_12ssp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="@dimen/_8sdp"
-                        android:text="NPW:"
-                        android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_10ssp" />
-
-                    <EditText
-                        android:id="@+id/edtNpw"
-                        android:layout_width="@dimen/_50sdp"
-                        android:layout_height="@dimen/_36sdp"
-                        android:layout_marginStart="@dimen/_4sdp"
-                        android:background="@drawable/edit_text_bg"
-                        android:hint="000"
-                        android:inputType="number"
-                        android:maxLength="3"
-                        android:padding="@dimen/_4sdp"
-                        android:textSize="@dimen/_12ssp" />
-
-                    <TextView
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="@dimen/_8sdp"
-                        android:text="Token:"
-                        android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_10ssp" />
-
-                    <EditText
-                        android:id="@+id/edtToken"
-                        android:layout_width="@dimen/_50sdp"
-                        android:layout_height="@dimen/_36sdp"
-                        android:layout_marginStart="@dimen/_4sdp"
-                        android:background="@drawable/edit_text_bg"
-                        android:hint="001"
-                        android:inputType="number"
-                        android:maxLength="3"
-                        android:padding="@dimen/_4sdp"
-                        android:textSize="@dimen/_12ssp" />
-
-                </LinearLayout>
-
-                <Button
-                    android:id="@+id/btnSendDisplay"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="@dimen/_8sdp"
-                    android:text="Send Display Frame"
-                    android:textSize="@dimen/_12ssp" />
+                <ImageView
+                    android:id="@+id/btnDismissWarning"
+                    android:layout_width="@dimen/_24sdp"
+                    android:layout_height="@dimen/_24sdp"
+                    android:padding="@dimen/_4sdp"
+                    android:src="@drawable/ic_close"
+                    app:tint="@color/orange_color" />
 
             </LinearLayout>
 
         </androidx.cardview.widget.CardView>
+
+        <!-- Empty State -->
+        <LinearLayout
+            android:id="@+id/layoutEmptyState"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_marginHorizontal="@dimen/_12sdp"
+            android:layout_marginTop="@dimen/_8sdp"
+            android:gravity="center"
+            android:orientation="vertical"
+            android:visibility="visible"
+            app:layout_constraintBottom_toBottomOf="parent"
+            app:layout_constraintEnd_toEndOf="parent"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toBottomOf="@id/cardWarning">
+
+            <ImageView
+                android:layout_width="@dimen/_80sdp"
+                android:layout_height="@dimen/_80sdp"
+                android:alpha="0.5"
+                android:src="@drawable/ic_usb"
+                app:tint="@color/txt_color_secondary" />
+
+            <TextView
+                android:id="@+id/txtEmptyTitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/_16sdp"
+                android:text="No USB Devices Found"
+                android:textColor="@color/txt_color_primary"
+                android:textSize="@dimen/_16ssp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/txtEmptySubtitle"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/_8sdp"
+                android:gravity="center"
+                android:paddingHorizontal="@dimen/_32sdp"
+                android:text="Connect your hard keypads via USB and tap Scan to detect them"
+                android:textColor="@color/txt_color_secondary"
+                android:textSize="@dimen/_12ssp" />
+
+            <Button
+                android:id="@+id/btnScanEmpty"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="@dimen/_16sdp"
+                android:paddingHorizontal="@dimen/_24sdp"
+                android:text="Scan for Devices"
+                android:textSize="@dimen/_14ssp" />
+
+        </LinearLayout>
+
+        <!-- Hidden views for compatibility -->
+        <Spinner
+            android:id="@+id/spinnerDevices"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <Button
+            android:id="@+id/btnConnect"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <Button
+            android:id="@+id/btnConnectAll"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
+
+        <Button
+            android:id="@+id/btnDisconnectAll"
+            android:layout_width="0dp"
+            android:layout_height="0dp"
+            android:visibility="gone"
+            app:layout_constraintStart_toStartOf="parent"
+            app:layout_constraintTop_toTopOf="parent" />
 
     </androidx.constraintlayout.widget.ConstraintLayout>
 

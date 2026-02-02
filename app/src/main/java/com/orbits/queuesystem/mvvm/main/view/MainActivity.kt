@@ -170,6 +170,16 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         handleUsbIntent(intent)
     }
 
+    override fun onResume() {
+        super.onResume()
+        // Re-register as queue operations handler when activity resumes
+        // This ensures MainActivity handles all queue operations even after visiting other activities
+        if (FTDIBridge.isInitialized()) {
+            FTDIBridge.getInstance().setQueueOperations(this)
+            Log.d("MainActivity", "Re-registered as FTDI queue operations handler")
+        }
+    }
+
     /**
      * Handle USB device attachment intent.
      */
@@ -178,7 +188,8 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
             Log.d("MainActivity", "USB device attached via intent")
             if (FTDISerialManager.isInitialized()) {
                 FTDISerialManager.getInstance().refreshDeviceList()
-                FTDISerialManager.getInstance().connectToFirstAvailable()
+                // Connect to all available devices (supports multiple keypads via USB hub)
+                FTDISerialManager.getInstance().connectToAllAvailable()
             }
         }
     }
@@ -186,6 +197,7 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
     /**
      * Initialize FTDI serial manager and bridge for hard keypad support.
      * Uses singleton pattern for persistent connection across activities.
+     * Supports multiple keypads connected via USB hub.
      */
     private fun initializeFTDI() {
         // Initialize singletons if not already done
@@ -195,10 +207,14 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         // Set this activity as the queue operations handler
         FTDIBridge.getInstance().setQueueOperations(this)
 
-        // Try to auto-connect if devices are available
+        // Try to auto-connect to all available devices (supports multiple keypads via USB hub)
         val devices = FTDISerialManager.getInstance().refreshDeviceList()
-        if (devices.isNotEmpty() && !FTDISerialManager.getInstance().isConnected()) {
-            FTDISerialManager.getInstance().connectToFirstAvailable()
+        Log.d("MainActivity", "FTDI: Found ${devices.size} USB serial device(s)")
+        if (devices.isNotEmpty()) {
+            val connectedCount = FTDISerialManager.getInstance().connectToAllAvailable()
+            Log.d("MainActivity", "FTDI: Connected to $connectedCount device(s)")
+        } else {
+            Log.d("MainActivity", "FTDI: No USB serial devices found. Make sure keypads are connected via USB hub.")
         }
 
         Log.d("MainActivity", "FTDI hard keypad support initialized (singleton)")
@@ -1781,5 +1797,16 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
         val serviceId = counterModel?.serviceId
         Log.d("MainActivity", "getServiceIdForCounter: counterId=$counterId -> serviceId=$serviceId")
         return serviceId
+    }
+
+    /**
+     * Get the current NPW (Number of People Waiting) for a given service.
+     * Used by FTDIBridge when a new keypad connects to show the current queue status.
+     */
+    override fun getNpwForService(serviceId: String): String? {
+        val count = getAllTransactionCount(serviceId)?.size ?: 0
+        val npw = count.toString().padStart(3, '0').take(3)
+        Log.d("MainActivity", "getNpwForService: serviceId=$serviceId -> npw=$npw")
+        return npw
     }
 }

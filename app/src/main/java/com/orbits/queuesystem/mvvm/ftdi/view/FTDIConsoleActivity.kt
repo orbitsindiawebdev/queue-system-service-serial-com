@@ -1,10 +1,12 @@
 package com.orbits.queuesystem.mvvm.ftdi.view
 
 import android.os.Bundle
+import android.util.Log
 import android.view.View
 import android.widget.AdapterView
 import android.widget.ArrayAdapter
 import androidx.databinding.DataBindingUtil
+import androidx.recyclerview.widget.LinearLayoutManager
 import com.hoho.android.usbserial.driver.UsbSerialDriver
 import com.orbits.queuesystem.R
 import com.orbits.queuesystem.databinding.ActivityFtdiConsoleBinding
@@ -12,41 +14,44 @@ import com.orbits.queuesystem.helper.BaseActivity
 import com.orbits.queuesystem.helper.Constants
 import com.orbits.queuesystem.helper.interfaces.CommonInterfaceClickEvent
 import com.orbits.queuesystem.helper.server.FTDIBridge
-import com.orbits.queuesystem.helper.server.FTDIProtocol
-import com.orbits.queuesystem.helper.server.FTDIQueueOperations
 import com.orbits.queuesystem.helper.server.FTDISerialManager
-import java.text.SimpleDateFormat
-import java.util.Date
-import java.util.Locale
+import com.orbits.queuesystem.mvvm.ftdi.adapter.ConnectionState
+import com.orbits.queuesystem.mvvm.ftdi.adapter.UsbDeviceAdapter
+import com.orbits.queuesystem.mvvm.ftdi.adapter.UsbDeviceItem
 
 /**
- * Debug console activity for testing FTDI hard keypad communication.
- * Uses singleton FTDISerialManager for persistent connection.
+ * Activity for managing FTDI hard keypad connections.
+ * Displays each USB device separately with individual connect/disconnect controls.
+ *
+ * NOTE: This activity only handles UI for connection management.
+ * Queue operations (Next, Call, Repeat) are handled by MainActivity.
  */
-class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQueueOperations,
+class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener,
     FTDISerialManager.FTDISerialEventListener {
 
+    companion object {
+        private const val TAG = "FTDIConsoleActivity"
+    }
+
     private lateinit var binding: ActivityFtdiConsoleBinding
+    private lateinit var deviceAdapter: UsbDeviceAdapter
 
     private var availableDevices = listOf<UsbSerialDriver>()
-    private var selectedDeviceIndex = 0
+    private var deviceItems = mutableListOf<UsbDeviceItem>()
 
     private val baudRates = listOf(9600, 19200, 38400, 57600, 115200)
     private var selectedBaudRate = 9600
-
-    private val logBuilder = StringBuilder()
-    private val maxLogLines = 500
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = DataBindingUtil.setContentView(this, R.layout.activity_ftdi_console)
 
         initializeToolbar()
+        setupRecyclerView()
         setupSpinners()
         setupClickListeners()
         connectToFTDI()
         refreshDevices()
-        updateUIFromConnectionState()
     }
 
     private fun initializeToolbar() {
@@ -64,8 +69,78 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
         )
     }
 
+    private fun setupRecyclerView() {
+        deviceAdapter = UsbDeviceAdapter(
+            onConnectClick = { item -> connectDevice(item) },
+            onDisconnectClick = { item -> disconnectDevice(item) }
+        )
+
+        binding.recyclerDevices.apply {
+            layoutManager = LinearLayoutManager(this@FTDIConsoleActivity)
+            adapter = deviceAdapter
+        }
+    }
+
+    private fun setupSpinners() {
+        // Baud rate spinner
+        val baudAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, baudRates.map { "$it" })
+        baudAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
+        binding.spinnerBaudRate.adapter = baudAdapter
+        binding.spinnerBaudRate.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
+            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
+                val newBaudRate = baudRates[position]
+                if (newBaudRate != selectedBaudRate) {
+                    selectedBaudRate = newBaudRate
+                    FTDISerialManager.getInstance().setBaudRate(selectedBaudRate)
+                    Log.d(TAG, "Baud rate set to: $selectedBaudRate")
+                }
+            }
+            override fun onNothingSelected(parent: AdapterView<*>?) {}
+        }
+    }
+
+    private fun setupClickListeners() {
+        binding.btnScanDevices.setOnClickListener {
+            refreshDevices()
+        }
+
+        binding.btnScanEmpty.setOnClickListener {
+            refreshDevices()
+        }
+
+        binding.switchAutoReconnect.setOnCheckedChangeListener { _, isChecked ->
+            FTDISerialManager.getInstance().setAutoReconnect(isChecked)
+            Log.d(TAG, "Auto-reconnect ${if (isChecked) "enabled" else "disabled"}")
+        }
+
+        binding.btnDismissWarning.setOnClickListener {
+            binding.cardWarning.visibility = View.GONE
+        }
+    }
+
+    /**
+     * Show USB hub warning message.
+     */
+    private fun showUsbHubWarning(message: String) {
+        runOnUiThread {
+            binding.txtWarningMessage.text = message
+            binding.cardWarning.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * Hide USB hub warning message.
+     */
+    private fun hideWarning() {
+        runOnUiThread {
+            binding.cardWarning.visibility = View.GONE
+        }
+    }
+
     /**
      * Connect to the singleton FTDI managers.
+     * NOTE: We do NOT set queueOperations here - MainActivity handles all queue operations.
+     * This activity only listens for UI events (connection status, keypad info).
      */
     private fun connectToFTDI() {
         // Ensure FTDISerialManager is initialized
@@ -81,9 +156,9 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
             FTDIBridge.init(this)
         }
 
-        // Add ourselves as listener to FTDIBridge
+        // Add ourselves as listener to FTDIBridge for UI updates only
+        // DO NOT set queueOperations - MainActivity handles queue operations
         FTDIBridge.getInstance().addEventListener(this)
-        FTDIBridge.getInstance().setQueueOperations(this)
 
         // Get current baud rate from manager
         selectedBaudRate = FTDISerialManager.getInstance().getBaudRate()
@@ -92,298 +167,255 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
             binding.spinnerBaudRate.setSelection(baudIndex)
         }
 
-        appendLog("FTDI Console connected to persistent manager")
+        // Get auto-reconnect state
+        binding.switchAutoReconnect.isChecked = FTDISerialManager.getInstance().isAutoReconnectEnabled()
     }
 
     /**
-     * Update UI based on current connection state.
+     * Refresh the list of available USB devices.
      */
-    private fun updateUIFromConnectionState() {
-        val state = FTDISerialManager.getInstance().getConnectionState()
-        updateConnectionStatus(state.isConnected, state.deviceName)
-        binding.switchAutoReconnect.isChecked = state.autoReconnectEnabled
-    }
-
-    private fun setupSpinners() {
-        // Baud rate spinner
-        val baudAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, baudRates.map { "$it" })
-        baudAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        binding.spinnerBaudRate.adapter = baudAdapter
-        binding.spinnerBaudRate.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                val newBaudRate = baudRates[position]
-                if (newBaudRate != selectedBaudRate) {
-                    selectedBaudRate = newBaudRate
-                    FTDISerialManager.getInstance().setBaudRate(selectedBaudRate)
-                    appendLog("Baud rate set to: $selectedBaudRate")
-                }
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-
-        // Device spinner - will be populated when devices are refreshed
-        updateDeviceSpinner()
-    }
-
-    private fun updateDeviceSpinner() {
-        val deviceNames = if (availableDevices.isEmpty()) {
-            listOf("No devices found")
-        } else {
-            availableDevices.mapIndexed { index, driver ->
-                "${driver.device.productName ?: "USB Device"} (${driver.device.deviceName})"
-            }
-        }
-
-        val deviceAdapter = ArrayAdapter(this, android.R.layout.simple_spinner_item, deviceNames)
-        deviceAdapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item)
-        binding.spinnerDevices.adapter = deviceAdapter
-        binding.spinnerDevices.onItemSelectedListener = object : AdapterView.OnItemSelectedListener {
-            override fun onItemSelected(parent: AdapterView<*>?, view: View?, position: Int, id: Long) {
-                selectedDeviceIndex = position
-            }
-            override fun onNothingSelected(parent: AdapterView<*>?) {}
-        }
-    }
-
-    private fun setupClickListeners() {
-        binding.btnRefreshDevices.setOnClickListener {
-            refreshDevices()
-        }
-
-        binding.btnConnect.setOnClickListener {
-            if (FTDISerialManager.getInstance().isConnected()) {
-                disconnect()
-            } else {
-                connect()
-            }
-        }
-
-        binding.btnClearLog.setOnClickListener {
-            clearLog()
-        }
-
-        binding.btnSendDisplay.setOnClickListener {
-            sendTestDisplayFrame()
-        }
-
-        binding.switchAutoReconnect.setOnCheckedChangeListener { _, isChecked ->
-            FTDISerialManager.getInstance().setAutoReconnect(isChecked)
-            appendLog("Auto-reconnect ${if (isChecked) "enabled" else "disabled"}")
-        }
-    }
-
     private fun refreshDevices() {
         availableDevices = FTDISerialManager.getInstance().refreshDeviceList()
-        updateDeviceSpinner()
-        appendLog("Found ${availableDevices.size} device(s)")
+        Log.d(TAG, "Scan complete: Found ${availableDevices.size} USB serial device(s)")
+
+        updateDeviceList()
     }
 
-    private fun connect() {
-        if (availableDevices.isEmpty()) {
-            appendLog("No devices available to connect")
-            return
+    /**
+     * Update the device list with current connection states.
+     */
+    private fun updateDeviceList() {
+        val connectedDeviceIds = FTDISerialManager.getInstance().getConnectedDevicesInfo().map { it.first }.toSet()
+        val keypads = if (FTDIBridge.isInitialized()) FTDIBridge.getInstance().getConnectedKeypads() else emptyMap()
+
+        // Create items for all available devices
+        deviceItems.clear()
+        for (driver in availableDevices) {
+            val device = driver.device
+            val deviceId = device.deviceId
+            val isConnected = connectedDeviceIds.contains(deviceId)
+
+            // Find keypad info for this device
+            val keypadAddress = FTDISerialManager.getInstance().getAddressForDeviceId(deviceId)
+            val counterId = keypadAddress?.let { keypads[it] }
+
+            // Check if there's an existing item with error state
+            val existingItem = deviceItems.find { it.deviceId == deviceId }
+
+            deviceItems.add(UsbDeviceItem(
+                deviceId = deviceId,
+                deviceName = device.productName ?: "USB Serial Device",
+                devicePath = device.deviceName ?: "",
+                vendorId = device.vendorId,
+                productId = device.productId,
+                driver = driver,
+                connectionState = if (isConnected) ConnectionState.CONNECTED else (existingItem?.connectionState ?: ConnectionState.DISCONNECTED),
+                keypadAddress = keypadAddress,
+                counterId = counterId,
+                errorMessage = existingItem?.errorMessage
+            ))
         }
 
-        if (selectedDeviceIndex >= availableDevices.size) {
-            appendLog("Invalid device selection")
-            return
+        // Update UI
+        runOnUiThread {
+            deviceAdapter.submitList(deviceItems.toList())
+            updateEmptyState()
+            updateSummary()
         }
+    }
 
+    /**
+     * Update the empty state visibility.
+     */
+    private fun updateEmptyState() {
+        if (deviceItems.isEmpty()) {
+            binding.layoutEmptyState.visibility = View.VISIBLE
+            binding.recyclerDevices.visibility = View.GONE
+        } else {
+            binding.layoutEmptyState.visibility = View.GONE
+            binding.recyclerDevices.visibility = View.VISIBLE
+        }
+    }
+
+    /**
+     * Update the summary text.
+     */
+    private fun updateSummary() {
+        val totalDevices = deviceItems.size
+        val connectedDevices = deviceItems.count { it.connectionState == ConnectionState.CONNECTED }
+        val keypadsCount = if (FTDIBridge.isInitialized()) FTDIBridge.getInstance().getConnectedKeypadCount() else 0
+
+        binding.txtSummaryStatus.text = "$totalDevices USB device(s) found • $connectedDevices connected • $keypadsCount keypad(s)"
+    }
+
+    /**
+     * Connect to a specific device.
+     */
+    private fun connectDevice(item: UsbDeviceItem) {
+        Log.d(TAG, "Connecting to device: ${item.deviceName} (ID: ${item.deviceId})")
+
+        // Update item state to connecting
+        updateDeviceState(item.deviceId, ConnectionState.CONNECTING)
+
+        // Set baud rate and connect
         FTDISerialManager.getInstance().setBaudRate(selectedBaudRate)
-        val success = FTDISerialManager.getInstance().connectToDriver(availableDevices[selectedDeviceIndex])
-        if (!success) {
-            appendLog("Connection request sent (waiting for permission)")
-        }
-    }
 
-    private fun disconnect() {
-        FTDISerialManager.getInstance().disconnect()
-        updateConnectionStatus(false, null)
-        appendLog("Disconnected")
-    }
-
-    private fun sendTestDisplayFrame() {
-        val address = binding.edtAddress.text.toString().padStart(4, '0').take(4)
-        val npw = binding.edtNpw.text.toString().padStart(3, '0').take(3)
-        val token = binding.edtToken.text.toString().padStart(3, '0').take(3)
-        // Counter is same as address for display purposes
-        val counter = address
-
-        if (!FTDISerialManager.getInstance().isConnected()) {
-            appendLog("Cannot send: not connected")
-            return
-        }
-
-        // Build display frame: @[addr][0x00][*][status][len][NPW(3)+Counter(4)+Token(3)][CR]
-        val frame = FTDIProtocol.buildDisplayFrame(address, npw, counter, token)
-        FTDISerialManager.getInstance().write(frame)
-        appendLog("TX: DISPLAY addr=$address npw=$npw counter=$counter token=$token")
-        appendLog("TX HEX: ${FTDIProtocol.run { frame.toHexString() }}")
-    }
-
-    private fun updateConnectionStatus(connected: Boolean, deviceName: String?) {
-        runOnUiThread {
-            if (connected) {
-                binding.viewConnectionIndicator.setBackgroundResource(R.drawable.circle_green)
-                binding.txtConnectionStatus.text = if (deviceName != null) {
-                    "Connected: $deviceName"
-                } else {
-                    "Connected"
-                }
-                binding.btnConnect.text = "Disconnect"
-                binding.btnConnect.setBackgroundColor(getColor(R.color.red_color))
-            } else {
-                binding.viewConnectionIndicator.setBackgroundResource(R.drawable.circle_red)
-                binding.txtConnectionStatus.text = "Disconnected"
-                binding.btnConnect.text = "Connect"
-                binding.btnConnect.setBackgroundColor(getColor(R.color.app_color))
-            }
-
-            // Update connected keypads info
-            updateConnectedKeypadsInfo()
-        }
-    }
-
-    private fun updateConnectedKeypadsInfo() {
-        runOnUiThread {
-            if (FTDIBridge.isInitialized()) {
-                val keypads = FTDIBridge.getInstance().getConnectedKeypads()
-                if (keypads.isNotEmpty()) {
-                    val info = keypads.entries.joinToString(", ") { "${it.key}->C${it.value}" }
-                    binding.txtConnectedKeypads.text = "Keypads (${keypads.size}): $info"
-                    binding.txtConnectedKeypads.visibility = View.VISIBLE
-                } else {
-                    binding.txtConnectedKeypads.text = "Keypads: None connected"
-                    binding.txtConnectedKeypads.visibility = View.VISIBLE
-                }
-            } else {
-                binding.txtConnectedKeypads.visibility = View.GONE
+        item.driver?.let { driver ->
+            val success = FTDISerialManager.getInstance().connectToDriver(driver)
+            if (!success) {
+                // Permission request sent, state will be updated via callback
+                Log.d(TAG, "Connection pending - waiting for permission")
             }
         }
     }
 
-    private fun appendLog(message: String) {
-        val timestamp = SimpleDateFormat("HH:mm:ss.SSS", Locale.getDefault()).format(Date())
-        val logLine = "[$timestamp] $message\n"
+    /**
+     * Disconnect from a specific device.
+     */
+    private fun disconnectDevice(item: UsbDeviceItem) {
+        Log.d(TAG, "Disconnecting from device: ${item.deviceName} (ID: ${item.deviceId})")
+        FTDISerialManager.getInstance().disconnectDevice(item.deviceId)
+    }
 
-        runOnUiThread {
-            logBuilder.append(logLine)
-
-            // Limit log size
-            val lines = logBuilder.toString().split("\n")
-            if (lines.size > maxLogLines) {
-                logBuilder.clear()
-                logBuilder.append(lines.takeLast(maxLogLines).joinToString("\n"))
-            }
-
-            binding.txtConsoleLog.text = logBuilder.toString()
-
-            // Auto-scroll to bottom
-            binding.scrollConsole.post {
-                binding.scrollConsole.fullScroll(View.FOCUS_DOWN)
+    /**
+     * Update the state of a specific device in the list.
+     */
+    private fun updateDeviceState(deviceId: Int, state: ConnectionState, errorMessage: String? = null) {
+        val index = deviceItems.indexOfFirst { it.deviceId == deviceId }
+        if (index >= 0) {
+            deviceItems[index] = deviceItems[index].copy(
+                connectionState = state,
+                errorMessage = errorMessage
+            )
+            runOnUiThread {
+                deviceAdapter.submitList(deviceItems.toList())
+                updateSummary()
             }
         }
     }
 
-    private fun clearLog() {
-        logBuilder.clear()
-        binding.txtConsoleLog.text = ""
-        appendLog("Log cleared")
+    /**
+     * Update keypad info for a device.
+     */
+    private fun updateKeypadInfo(deviceId: Int, keypadAddress: String?, counterId: String?) {
+        val index = deviceItems.indexOfFirst { it.deviceId == deviceId }
+        if (index >= 0) {
+            deviceItems[index] = deviceItems[index].copy(
+                keypadAddress = keypadAddress,
+                counterId = counterId
+            )
+            runOnUiThread {
+                deviceAdapter.submitList(deviceItems.toList())
+                updateSummary()
+            }
+        }
     }
 
     // ==================== FTDISerialEventListener Implementation ====================
 
     override fun onDeviceConnected(deviceName: String) {
-        updateConnectionStatus(true, deviceName)
-        appendLog("USB device connected: $deviceName")
+        Log.d(TAG, "USB device connected: $deviceName")
+        updateDeviceList()
     }
 
     override fun onDeviceDisconnected() {
-        updateConnectionStatus(false, null)
-        appendLog("USB device disconnected")
+        Log.d(TAG, "All USB devices disconnected")
+        updateDeviceList()
     }
 
     override fun onDataReceived(data: ByteArray) {
-        // Raw data - already logged by FTDIBridge
+        // Not needed for UI
     }
 
     override fun onFrameReceived(frame: ByteArray) {
-        // Frame received - already logged by FTDIBridge
+        // Not needed for UI
     }
 
     override fun onError(error: String) {
-        appendLog("ERROR: $error")
+        Log.e(TAG, "Error: $error")
+
+        // Check if this is a USB hub power issue
+        val isUsbHubError = error.contains("get_status") || error.contains("USB hub")
+
+        if (isUsbHubError) {
+            showUsbHubWarning("USB hub error. Use a POWERED USB hub for multiple keypads, or connect one device at a time.")
+        }
+
+        // Find device with connecting state and mark as error
+        deviceItems.forEachIndexed { index, item ->
+            if (item.connectionState == ConnectionState.CONNECTING) {
+                deviceItems[index] = item.copy(
+                    connectionState = ConnectionState.ERROR,
+                    errorMessage = if (isUsbHubError) "USB hub power issue" else error
+                )
+            }
+        }
+        runOnUiThread {
+            deviceAdapter.submitList(deviceItems.toList())
+            updateSummary()
+        }
     }
 
     override fun onConnectionStateChanged(state: FTDISerialManager.ConnectionState) {
-        updateConnectionStatus(state.isConnected, state.deviceName)
         binding.switchAutoReconnect.isChecked = state.autoReconnectEnabled
+        updateDeviceList()
+    }
+
+    override fun onMultiDeviceConnected(deviceId: Int, deviceName: String) {
+        Log.d(TAG, "USB device connected: $deviceName (ID: $deviceId)")
+        updateDeviceState(deviceId, ConnectionState.CONNECTED)
+        updateDeviceList()
+    }
+
+    override fun onMultiDeviceDisconnected(deviceId: Int, deviceName: String) {
+        Log.d(TAG, "USB device disconnected: $deviceName (ID: $deviceId)")
+        updateDeviceState(deviceId, ConnectionState.DISCONNECTED)
+        updateDeviceList()
     }
 
     // ==================== FTDIEventListener Implementation ====================
 
     override fun onKeypadConnected(address: String, counterId: String) {
-        val totalKeypads = if (FTDIBridge.isInitialized()) FTDIBridge.getInstance().getConnectedKeypadCount() else 0
-        appendLog("Keypad connected: addr=$address -> counter=$counterId (Total: $totalKeypads)")
-        updateConnectedKeypadsInfo()
+        Log.d(TAG, "Keypad connected: addr=$address -> counter=$counterId")
+        // Find the device for this keypad and update its info
+        val deviceId = FTDISerialManager.getInstance().getDeviceIdForAddress(address)
+        if (deviceId != null) {
+            updateKeypadInfo(deviceId, address, counterId)
+        }
+        updateDeviceList()
     }
 
     override fun onKeypadDisconnected(address: String) {
-        val totalKeypads = if (FTDIBridge.isInitialized()) FTDIBridge.getInstance().getConnectedKeypadCount() else 0
-        appendLog("Keypad disconnected: addr=$address (Remaining: $totalKeypads)")
-        updateConnectedKeypadsInfo()
+        Log.d(TAG, "Keypad disconnected: addr=$address")
+        val deviceId = FTDISerialManager.getInstance().getDeviceIdForAddress(address)
+        if (deviceId != null) {
+            updateKeypadInfo(deviceId, null, null)
+        }
+        updateDeviceList()
     }
 
     override fun onKeypadCountChanged(count: Int) {
-        updateConnectedKeypadsInfo()
+        updateSummary()
+    }
+
+    override fun onUsbDeviceCountChanged(count: Int) {
+        updateDeviceList()
     }
 
     override fun onCommandReceived(address: String, command: String, data: String) {
-        appendLog("RX CMD: $command from $address ($data)")
+        // Not needed for UI
     }
 
     override fun onResponseSent(address: String, response: String) {
-        appendLog("TX RSP: $response to $address")
+        // Not needed for UI
     }
 
     override fun onConnectionStatusChanged(connected: Boolean) {
-        updateConnectionStatus(connected, null)
-        appendLog("Connection status: ${if (connected) "CONNECTED" else "DISCONNECTED"}")
+        updateDeviceList()
     }
 
     override fun onLogMessage(message: String) {
-        appendLog(message)
-    }
-
-    // ==================== FTDIQueueOperations Implementation ====================
-
-    override fun onHardKeypadConnected(ftdiAddress: String, counterId: String) {
-        appendLog("Queue: Keypad $ftdiAddress connected as Counter $counterId")
-    }
-
-    override fun onHardKeypadNext(counterId: String) {
-        appendLog("Queue: NEXT request from Counter $counterId")
-        // In console mode, just send a test display response
-        if (FTDIBridge.isInitialized()) {
-            FTDIBridge.getInstance().sendDisplayToKeypad(counterId, "000", "000")
-        }
-    }
-
-    override fun onHardKeypadRepeat(counterId: String, tokenNo: String) {
-        appendLog("Queue: REPEAT request from Counter $counterId, token=$tokenNo")
-    }
-
-    override fun onHardKeypadDirectCall(counterId: String, tokenNo: String) {
-        appendLog("Queue: DIRECT_CALL request from Counter $counterId, token=$tokenNo")
-    }
-
-    override fun onHardKeypadDisconnected(ftdiAddress: String) {
-        appendLog("Queue: Keypad $ftdiAddress disconnected")
-    }
-
-    override fun getServiceIdForCounter(counterId: String): String? {
-        appendLog("Queue: getServiceIdForCounter ")
-        return null
+        // Not needed for UI - can add toast for important messages if needed
     }
 
     // ==================== Lifecycle ====================
@@ -397,6 +429,5 @@ class FTDIConsoleActivity : BaseActivity(), FTDIBridge.FTDIEventListener, FTDIQu
         if (FTDISerialManager.isInitialized()) {
             FTDISerialManager.getInstance().removeEventListener(this)
         }
-        // Connection persists because we're using singletons
     }
 }

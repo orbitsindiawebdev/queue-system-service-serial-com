@@ -9,9 +9,12 @@ import android.util.Log
  * Singleton bridge between FTDI serial communication and the queue system.
  * Translates FTDI protocol commands to queue operations and vice versa.
  *
- * IMPORTANT: This bridge supports MULTIPLE hard keypads on the same RS-485 bus.
+ * SUPPORTS MULTIPLE HARD KEYPADS:
+ * - Via USB Hub: Each keypad is a separate USB serial device
+ * - Via RS-485 Bus: All keypads share the same serial connection but are addressed individually
+ *
  * Each keypad has a unique 4-digit address (e.g., "0001", "0002", "0003").
- * All keypads share the same physical serial connection but are addressed individually.
+ * When using USB hub, the FTDISerialManager automatically maps addresses to device IDs.
  */
 class FTDIBridge private constructor(private val context: Context) : FTDISerialManager.FTDISerialEventListener {
 
@@ -99,6 +102,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         fun onConnectionStatusChanged(connected: Boolean)
         fun onLogMessage(message: String)
         fun onKeypadCountChanged(count: Int) {}
+        fun onUsbDeviceCountChanged(count: Int) {}  // Number of USB devices connected
     }
 
     /**
@@ -294,6 +298,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     /**
      * Send display update to a specific keypad by counter ID.
      * Format: NPW(3) + Counter(4) + Token(3)
+     * Uses address-based routing to send to the correct USB device.
      */
     fun sendDisplayToKeypad(counterId: String, npw: String, token: String) {
         // Normalize counterId to 4-digit format
@@ -304,7 +309,8 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         val frame = FTDIProtocol.buildDisplayFrame(address, npw, counter, token)
 
         if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
-            FTDISerialManager.getInstance().write(frame)
+            // Use address-based routing to send to the correct device
+            FTDISerialManager.getInstance().writeToAddress(address, frame)
             notifyResponseSent(address, "DISPLAY npw=$npw counter=$counter token=$token")
             notifyLog("TX: DISPLAY to $address (Counter $normalizedCounterId) -> npw=$npw token=$token")
             Log.d(TAG, "Sent display to counter $normalizedCounterId (addr=$address): npw=$npw, counter=$counter, token=$token")
@@ -316,12 +322,14 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
 
     /**
      * Send display update to a keypad by address.
+     * Uses address-based routing to send to the correct USB device.
      */
     fun sendDisplayToAddress(address: String, npw: String, counter: String, token: String) {
         val frame = FTDIProtocol.buildDisplayFrame(address, npw, counter, token)
 
         if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
-            FTDISerialManager.getInstance().write(frame)
+            // Use address-based routing to send to the correct device
+            FTDISerialManager.getInstance().writeToAddress(address, frame)
             notifyResponseSent(address, "DISPLAY npw=$npw counter=$counter token=$token")
             notifyLog("TX: DISPLAY to $address -> npw=$npw counter=$counter token=$token")
             Log.d(TAG, "Sent display to address $address: npw=$npw, counter=$counter, token=$token")
@@ -331,26 +339,28 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     }
 
     /**
-     * Send all services info to a keypad.
+     * Send all services info to all keypads (broadcast).
      */
     fun sendAllServices(services: Map<Int, String>) {
         val frame = FTDIProtocol.buildAllServicesResponse(services)
 
         if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
+            // Broadcast to all devices
             FTDISerialManager.getInstance().write(frame)
-            notifyLog("TX: ALL_SERVICES (${services.size} services)")
+            notifyLog("TX: ALL_SERVICES (${services.size} services) - broadcast")
             Log.d(TAG, "Sent all services: ${services.size} services")
         }
     }
 
     /**
-     * Send my info response to a keypad.
+     * Send my info response to a specific keypad.
+     * Uses address-based routing to send to the correct USB device.
      */
     fun sendMyInfo(address: String, counter: String, serviceNo: String) {
         val frame = FTDIProtocol.buildMyInfoResponse(address, counter, serviceNo)
 
         if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
-            FTDISerialManager.getInstance().write(frame)
+            FTDISerialManager.getInstance().writeToAddress(address, frame)
             notifyResponseSent(address, "MY_INFO counter=$counter svc=$serviceNo")
             notifyLog("TX: MY_INFO to $address -> counter=$counter svc=$serviceNo")
             Log.d(TAG, "Sent my info to address $address")
@@ -359,12 +369,13 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
 
     /**
      * Send MyNPW frame to a keypad.
+     * Uses address-based routing to send to the correct USB device.
      */
     fun sendMyNPW(address: String, npw: String, counter: String) {
         val frame = FTDIProtocol.buildMyNPWFrame(address, npw, counter)
 
         if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
-            FTDISerialManager.getInstance().write(frame)
+            FTDISerialManager.getInstance().writeToAddress(address, frame)
             notifyResponseSent(address, "MY_NPW npw=$npw counter=$counter")
             notifyLog("TX: MY_NPW to $address -> npw=$npw counter=$counter")
         }
@@ -372,6 +383,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
 
     /**
      * Send MyNPW frame to a keypad by counter ID.
+     * Uses address-based routing to send to the correct USB device.
      */
     fun sendMyNPWToKeypad(counterId: String, npw: String) {
         val normalizedCounterId = counterId.padStart(4, '0').take(4)
@@ -384,7 +396,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     /**
      * Send both MY_NPW and DISPLAY commands to hard keypad IMMEDIATELY.
      * This is used for NEXT, CALL, and REPEAT operations.
-     * Uses writeSync for immediate transmission without queue delay.
+     * Uses writeSyncToAddress for immediate transmission to the correct USB device.
      *
      * @param counterId The counter ID
      * @param npw Number of people waiting (3 digits)
@@ -408,19 +420,19 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         notifyLog("sendResponseToHardKeypad: counterId=$normalizedCounterId, initialized=$isSerialInitialized, connected=$isSerialConnected")
 
         if (isSerialInitialized && isSerialConnected) {
-            // Send MY_NPW command first - use writeSync for immediate transmission
+            // Send MY_NPW command first - use writeSyncToAddress for immediate transmission to the correct device
             val myNpwFrame = FTDIProtocol.buildMyNPWFrame(address, npwPad, counter)
-            val myNpwResult = FTDISerialManager.getInstance().writeSync(myNpwFrame)
-            Log.d(TAG, "MY_NPW writeSync result: $myNpwResult")
+            val myNpwResult = FTDISerialManager.getInstance().writeSyncToAddress(address, myNpwFrame)
+            Log.d(TAG, "MY_NPW writeSyncToAddress result: $myNpwResult")
             notifyLog("TX: MY_NPW to $address -> npw=$npwPad counter=$counter (success=$myNpwResult)")
 
             // Small delay between frames to ensure proper reception
             Thread.sleep(30)
 
-            // Send DISPLAY command - use writeSync for immediate transmission
+            // Send DISPLAY command - use writeSyncToAddress for immediate transmission to the correct device
             val displayFrame = FTDIProtocol.buildDisplayFrame(address, npwPad, counter, tokenPad)
-            val displayResult = FTDISerialManager.getInstance().writeSync(displayFrame)
-            Log.d(TAG, "DISPLAY writeSync result: $displayResult")
+            val displayResult = FTDISerialManager.getInstance().writeSyncToAddress(address, displayFrame)
+            Log.d(TAG, "DISPLAY writeSyncToAddress result: $displayResult")
             notifyLog("TX: DISPLAY to $address -> npw=$npwPad counter=$counter token=$tokenPad (success=$displayResult)")
 
             notifyResponseSent(address, "MY_NPW + DISPLAY npw=$npwPad counter=$counter token=$tokenPad")
@@ -434,6 +446,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     /**
      * Broadcast display to ALL connected keypads.
      * Useful for announcements that should appear on all keypads.
+     * Uses address-based routing to send to each keypad's USB device.
      */
     fun broadcastDisplay(npw: String, token: String) {
         if (!FTDISerialManager.isInitialized() || !FTDISerialManager.getInstance().isConnected()) {
@@ -447,13 +460,15 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         keypads.forEach { (address, counterId) ->
             val counter = FTDIProtocol.toFtdiAddress(counterId)
             val frame = FTDIProtocol.buildDisplayFrame(address, npw, counter, token)
-            FTDISerialManager.getInstance().write(frame)
+            // Use address-based routing for each keypad
+            FTDISerialManager.getInstance().writeToAddress(address, frame)
             notifyLog("TX: BROADCAST DISPLAY to $address")
         }
     }
 
     /**
      * Send display update to multiple specific keypads.
+     * Uses address-based routing to send to each keypad's USB device.
      */
     fun sendDisplayToMultipleKeypads(counterIds: List<String>, npw: String, token: String) {
         if (!FTDISerialManager.isInitialized() || !FTDISerialManager.getInstance().isConnected()) {
@@ -476,6 +491,7 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
     /**
      * Broadcast updated NPW count to all hard keypads of the same service.
      * This is called when any counter performs a Call or Next operation.
+     * Uses address-based routing to send to the correct USB device for each keypad.
      *
      * @param serviceId The service ID to broadcast to
      * @param npw The updated NPW count (Number of People Waiting)
@@ -504,8 +520,9 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
             val address = counterToAddressMap[counterId]
             if (address != null) {
                 // Send MY_NPW frame to update the NPW display
+                // Use address-based routing to send to the correct USB device
                 val frame = FTDIProtocol.buildMyNPWFrame(address, npw.padStart(3, '0').take(3), counterId)
-                FTDISerialManager.getInstance().writeSync(frame)
+                FTDISerialManager.getInstance().writeSyncToAddress(address, frame)
                 notifyLog("TX: NPW BROADCAST to $address (counter $counterId) -> npw=$npw")
                 Log.d(TAG, "Sent NPW broadcast to counter $counterId (addr=$address): npw=$npw")
                 broadcastCount++
@@ -528,10 +545,11 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         notifyConnectionStatus(true)
         notifyLog("USB device connected: $deviceName")
         notifyLog("Waiting for keypad(s) to send CONNECT command...")
+        notifyUsbDeviceCountChanged()
     }
 
     override fun onDeviceDisconnected() {
-        Log.d(TAG, "USB device disconnected")
+        Log.d(TAG, "All USB devices disconnected")
 
         // Notify about all keypads being disconnected
         val disconnectedKeypads = addressToCounterMap.keys.toList()
@@ -543,11 +561,51 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
         // Clear all mappings
         addressToCounterMap.clear()
         counterToAddressMap.clear()
+        counterToServiceMap.clear()
         keypadConnectionTimes.clear()
 
         notifyConnectionStatus(false)
         notifyKeypadCountChanged()
-        notifyLog("USB device disconnected - all ${disconnectedKeypads.size} keypad(s) disconnected")
+        notifyUsbDeviceCountChanged()
+        notifyLog("All USB devices disconnected - ${disconnectedKeypads.size} keypad(s) disconnected")
+    }
+
+    override fun onMultiDeviceConnected(deviceId: Int, deviceName: String) {
+        Log.d(TAG, "USB device connected: $deviceName (ID: $deviceId)")
+        notifyLog("USB device connected: $deviceName (ID: $deviceId)")
+        notifyLog("Waiting for keypad on device $deviceId to send CONNECT command...")
+        notifyUsbDeviceCountChanged()
+    }
+
+    override fun onMultiDeviceDisconnected(deviceId: Int, deviceName: String) {
+        Log.d(TAG, "USB device disconnected: $deviceName (ID: $deviceId)")
+
+        // Find and remove any keypad associated with this device
+        val keypadAddress = FTDISerialManager.getInstance().getAddressForDeviceId(deviceId)
+        if (keypadAddress != null) {
+            val counterId = addressToCounterMap.remove(keypadAddress)
+            if (counterId != null) {
+                counterToAddressMap.remove(counterId)
+                counterToServiceMap.remove(counterId)
+                keypadConnectionTimes.remove(keypadAddress)
+                queueOperations?.onHardKeypadDisconnected(keypadAddress)
+                notifyKeypadDisconnected(keypadAddress)
+                Log.d(TAG, "Keypad $keypadAddress (counter $counterId) disconnected with device $deviceId")
+            }
+        }
+
+        notifyLog("USB device disconnected: $deviceName (ID: $deviceId)")
+        notifyKeypadCountChanged()
+        notifyUsbDeviceCountChanged()
+    }
+
+    override fun onMultiDeviceDataReceived(deviceId: Int, data: ByteArray) {
+        // Handled by regular onDataReceived and per-device frame processing
+    }
+
+    override fun onMultiDeviceFrameReceived(deviceId: Int, frame: ByteArray) {
+        // Frames are already processed by onFrameReceived
+        // This is for additional device-specific logging if needed
     }
 
     override fun onDataReceived(data: ByteArray) {
@@ -613,12 +671,38 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
             Log.w(TAG, "No service ID found for counter $counterId")
         }
 
-        // Notify queue system
+        // Notify queue system - this will also trigger sending initial NPW if available
         queueOperations?.onHardKeypadConnected(address, counterId)
         notifyKeypadConnected(address, counterId)
 
-        // Send initial display (000 tokens waiting, counter, 000 current token)
-        sendDisplayToAddress(address, "000", FTDIProtocol.toFtdiAddress(counterId), "000")
+        // Send initial display with current NPW
+        // Get initial NPW from queue operations if available
+        val initialNpw = if (!serviceId.isNullOrEmpty()) {
+            queueOperations?.getNpwForService(serviceId) ?: "000"
+        } else {
+            "000"
+        }
+
+        // Send MY_NPW first, then DISPLAY - use address-based routing to correct device
+        Thread {
+            try {
+                if (FTDISerialManager.isInitialized() && FTDISerialManager.getInstance().isConnected()) {
+                    // Send MY_NPW frame to the specific device for this keypad
+                    val myNpwFrame = FTDIProtocol.buildMyNPWFrame(address, initialNpw.padStart(3, '0').take(3), counterId)
+                    FTDISerialManager.getInstance().writeSyncToAddress(address, myNpwFrame)
+                    notifyLog("TX: Initial MY_NPW to $address -> npw=$initialNpw")
+
+                    Thread.sleep(30)
+
+                    // Send DISPLAY frame to the specific device for this keypad
+                    val displayFrame = FTDIProtocol.buildDisplayFrame(address, initialNpw.padStart(3, '0').take(3), counterId, "000")
+                    FTDISerialManager.getInstance().writeSyncToAddress(address, displayFrame)
+                    notifyLog("TX: Initial DISPLAY to $address -> npw=$initialNpw token=000")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error sending initial display: ${e.message}")
+            }
+        }.start()
 
         Log.d(TAG, "Keypad $address registered. Total keypads: ${addressToCounterMap.size}")
     }
@@ -826,6 +910,39 @@ class FTDIBridge private constructor(private val context: Context) : FTDISerialM
             eventListeners.forEach { it.onKeypadCountChanged(count) }
         }
     }
+
+    private fun notifyUsbDeviceCountChanged() {
+        val count = if (FTDISerialManager.isInitialized()) {
+            FTDISerialManager.getInstance().getConnectedDeviceCount()
+        } else {
+            0
+        }
+        mainHandler.post {
+            eventListeners.forEach { it.onUsbDeviceCountChanged(count) }
+        }
+    }
+
+    /**
+     * Get number of connected USB devices.
+     */
+    fun getConnectedUsbDeviceCount(): Int {
+        return if (FTDISerialManager.isInitialized()) {
+            FTDISerialManager.getInstance().getConnectedDeviceCount()
+        } else {
+            0
+        }
+    }
+
+    /**
+     * Get info about connected USB devices.
+     */
+    fun getConnectedUsbDevicesInfo(): List<Pair<Int, String>> {
+        return if (FTDISerialManager.isInitialized()) {
+            FTDISerialManager.getInstance().getConnectedDevicesInfo()
+        } else {
+            emptyList()
+        }
+    }
 }
 
 /**
@@ -843,4 +960,10 @@ interface FTDIQueueOperations {
      * Used for NPW broadcasting to keypads of the same service.
      */
     fun getServiceIdForCounter(counterId: String): String?
+
+    /**
+     * Get the current NPW (Number of People Waiting) for a given service.
+     * Used when a new keypad connects to show the current queue status.
+     */
+    fun getNpwForService(serviceId: String): String?
 }
