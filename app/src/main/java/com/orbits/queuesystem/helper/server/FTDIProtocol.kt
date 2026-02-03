@@ -118,11 +118,12 @@ object FTDIProtocol {
      */
     fun buildDisplayFrame(address: String, npw: String, counter: String, token: String, statusByte: Int = 0): ByteArray {
         val displayAddr = toDisplayCounter(address)     // Transform address for display (0008 -> 0800)
+//        val displayAddr = address     // Transform address for display (0008 -> 0800)
         val npwPad = npw.padStart(3, '0').take(3)
         val displayCounter = toDisplayCounter(counter)  // Transform counter for display
         val tokenPad = token.padStart(3, '0').take(3)
 
-        val data = npwPad + displayCounter + tokenPad  // Total 10 bytes
+        val data = npwPad + address + tokenPad  // Total 10 bytes
         val dataLen = data.length
 
         val buf = mutableListOf<Byte>()
@@ -183,7 +184,7 @@ object FTDIProtocol {
         val displayAddr = toDisplayCounter(address)     // Transform address for display (0008 -> 0800)
         val npwPad = npw.padStart(3, '0').take(3)
         val displayCounter = toDisplayCounter(counter)  // Transform counter for display
-        val data = npwPad + displayCounter + "000"
+        val data = npwPad + address + "000"
 
         val buf = mutableListOf<Byte>()
         buf.add(FRAME_START)

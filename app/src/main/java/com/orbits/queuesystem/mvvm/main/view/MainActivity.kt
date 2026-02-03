@@ -1181,6 +1181,18 @@ class MainActivity : BaseActivity(), MessageListener, TextToSpeech.OnInitListene
                         getCurrentServiceToken(serviceId).plus(1)
                     )
                 }
+
+                // Broadcast NPW update to all hard keypads for this service
+                // This notifies counters when a new token is issued
+                val currentServiceId = serviceId // Capture before clearing
+                val npw = getAllTransactionCount(currentServiceId)?.size?.toString() ?: "0"
+                Log.d("MainActivity", "New token created for service $currentServiceId, broadcasting NPW=$npw to hard keypads")
+                Thread {
+                    if (FTDIBridge.isInitialized()) {
+                        FTDIBridge.getInstance().broadcastNpwToService(currentServiceId, npw)
+                    }
+                }.start()
+
                 serviceId = ""
             }
         } else {
