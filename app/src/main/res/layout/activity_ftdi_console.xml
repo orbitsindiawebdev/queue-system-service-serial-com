@@ -59,7 +59,7 @@
                             android:layout_height="wrap_content"
                             android:text="Hard Keypad Manager"
                             android:textColor="@color/txt_color_primary"
-                            android:textSize="@dimen/_16ssp"
+                            android:textSize="@dimen/_12ssp"
                             android:textStyle="bold" />
 
                         <TextView
@@ -69,16 +69,16 @@
                             android:layout_marginTop="@dimen/_4sdp"
                             android:text="0 USB devices • 0 keypads connected"
                             android:textColor="@color/txt_color_secondary"
-                            android:textSize="@dimen/_12ssp" />
+                            android:textSize="@dimen/_10ssp" />
 
                     </LinearLayout>
 
                     <Button
                         android:id="@+id/btnScanDevices"
                         android:layout_width="wrap_content"
-                        android:layout_height="@dimen/_40sdp"
+                        android:layout_height="@dimen/_32sdp"
                         android:text="Scan"
-                        android:textSize="@dimen/_12ssp" />
+                        android:textSize="@dimen/_10ssp" />
 
                 </LinearLayout>
 
@@ -95,12 +95,12 @@
                         android:layout_height="wrap_content"
                         android:text="Baud Rate:"
                         android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_12ssp" />
+                        android:textSize="@dimen/_10ssp" />
 
                     <Spinner
                         android:id="@+id/spinnerBaudRate"
-                        android:layout_width="@dimen/_100sdp"
-                        android:layout_height="@dimen/_36sdp"
+                        android:layout_width="@dimen/_75sdp"
+                        android:layout_height="@dimen/_28sdp"
                         android:layout_marginStart="@dimen/_8sdp"
                         android:background="@drawable/spinner_bg" />
 
@@ -114,7 +114,7 @@
                         android:layout_height="wrap_content"
                         android:text="Auto Connect:"
                         android:textColor="@color/txt_color_secondary"
-                        android:textSize="@dimen/_11ssp" />
+                        android:textSize="@dimen/_9ssp" />
 
                     <androidx.appcompat.widget.SwitchCompat
                         android:id="@+id/switchAutoReconnect"
@@ -138,7 +138,7 @@
             android:layout_marginTop="@dimen/_16sdp"
             android:text="Available USB Devices"
             android:textColor="@color/txt_color_primary"
-            android:textSize="@dimen/_14ssp"
+            android:textSize="@dimen/_11ssp"
             android:textStyle="bold"
             app:layout_constraintEnd_toEndOf="parent"
             app:layout_constraintStart_toStartOf="parent"
@@ -183,7 +183,7 @@
 
                 <ImageView
                     android:layout_width="@dimen/_24sdp"
-                    android:layout_height="@dimen/_24sdp"
+                    android:layout_height="@dimen/_22sdp"
                     android:src="@drawable/ic_warning"
                     app:tint="@color/orange_color" />
 
@@ -195,7 +195,7 @@
                     android:layout_weight="1"
                     android:text="USB hub error detected. Use a powered USB hub for multiple devices."
                     android:textColor="@color/orange_color"
-                    android:textSize="@dimen/_11ssp" />
+                    android:textSize="@dimen/_9ssp" />
 
                 <ImageView
                     android:id="@+id/btnDismissWarning"
@@ -238,7 +238,7 @@
                 android:layout_marginTop="@dimen/_16sdp"
                 android:text="No USB Devices Found"
                 android:textColor="@color/txt_color_primary"
-                android:textSize="@dimen/_16ssp"
+                android:textSize="@dimen/_12ssp"
                 android:textStyle="bold" />
 
             <TextView
@@ -250,7 +250,7 @@
                 android:paddingHorizontal="@dimen/_32sdp"
                 android:text="Connect your hard keypads via USB and tap Scan to detect them"
                 android:textColor="@color/txt_color_secondary"
-                android:textSize="@dimen/_12ssp" />
+                android:textSize="@dimen/_10ssp" />
 
             <Button
                 android:id="@+id/btnScanEmpty"
@@ -259,7 +259,7 @@
                 android:layout_marginTop="@dimen/_16sdp"
                 android:paddingHorizontal="@dimen/_24sdp"
                 android:text="Scan for Devices"
-                android:textSize="@dimen/_14ssp" />
+                android:textSize="@dimen/_10ssp" />
 
         </LinearLayout>
 
