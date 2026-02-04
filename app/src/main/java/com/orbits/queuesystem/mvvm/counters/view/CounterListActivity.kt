@@ -17,6 +17,7 @@ import com.orbits.queuesystem.helper.database.LocalDB.addCounterInDB
 import com.orbits.queuesystem.helper.database.LocalDB.getAllCounterFromDB
 import com.orbits.queuesystem.helper.interfaces.AlertDialogInterface
 import com.orbits.queuesystem.helper.interfaces.CommonInterfaceClickEvent
+import com.orbits.queuesystem.helper.server.FTDIBridge
 import com.orbits.queuesystem.helper.server.TCPServer
 import com.orbits.queuesystem.mvvm.counters.adapter.CounterListAdapter
 import com.orbits.queuesystem.mvvm.counters.model.CounterListDataModel
@@ -83,6 +84,13 @@ class CounterListActivity : BaseActivity() {
                                 val dbModel = parseInCounterDbModel(model, model.counterId ?: "")
                                 addCounterInDB(dbModel)
                                 setData(parseInCounterModelArraylist(getAllCounterFromDB()))
+
+                                // Update FTDIBridge counter-to-service mapping if service changed
+                                // This ensures hard keypads get NPW for the correct service
+                                if (FTDIBridge.isInitialized() && !model.counterId.isNullOrEmpty() && !model.serviceId.isNullOrEmpty()) {
+                                    FTDIBridge.getInstance().updateCounterService(model.counterId, model.serviceId)
+                                    Log.d("CounterListActivity", "Updated FTDIBridge mapping: counter=${model.counterId} -> service=${model.serviceId}")
+                                }
 
                                 // Send updated data to all connected clients
                                 sendToAllClients()
@@ -159,6 +167,12 @@ class CounterListActivity : BaseActivity() {
                     val dbModel = parseInCounterDbModel(model, model.counterId ?: "")
                     addCounterInDB(dbModel)
                     setData(parseInCounterModelArraylist(getAllCounterFromDB()))
+
+                    // Update FTDIBridge counter-to-service mapping for new counter
+                    if (FTDIBridge.isInitialized() && !model.counterId.isNullOrEmpty() && !model.serviceId.isNullOrEmpty()) {
+                        FTDIBridge.getInstance().updateCounterService(model.counterId, model.serviceId)
+                        Log.d("CounterListActivity", "Added FTDIBridge mapping: counter=${model.counterId} -> service=${model.serviceId}")
+                    }
 
                     // Send updated data to all connected clients
                     sendToAllClients()

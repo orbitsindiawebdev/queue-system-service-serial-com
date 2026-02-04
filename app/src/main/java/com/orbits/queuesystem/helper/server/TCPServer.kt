@@ -20,9 +20,11 @@ import java.io.IOException
 import java.io.InputStream
 import java.io.InputStreamReader
 import java.io.OutputStream
+import java.net.BindException
 import java.net.InetSocketAddress
 import java.net.ServerSocket
 import java.net.Socket
+import java.net.SocketException
 import java.security.MessageDigest
 import java.util.Base64
 import java.util.UUID
@@ -86,7 +88,12 @@ class TCPServer(private val port: Int, private val messageListener: MessageListe
                     Log.i("TCPServer", "Client connected: $clientIp")
                 }
 
-            } catch (e: Exception) {
+            }catch (e: SocketException){
+                Log.e("TCPServer", "SocketException error", e)
+            }catch (e: BindException){
+                Log.e("TCPServer", "BindException error", e)
+            }
+            catch (e: Exception) {
 //                if (isRunning) {
                     Log.e("TCPServer", "Server error", e)
 //                }

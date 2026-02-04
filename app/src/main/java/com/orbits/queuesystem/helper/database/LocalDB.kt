@@ -1,6 +1,7 @@
 package com.orbits.queuesystem.helper.database
 
 import android.content.Context
+import android.util.Log
 import com.orbits.queuesystem.helper.Extensions.asString
 import com.orbits.queuesystem.helper.Extensions.printLog
 
@@ -95,7 +96,10 @@ object LocalDB {
 
     fun Context.addCounterInDB(counters: CounterDataDbModel): ArrayList<CounterDataDbModel?> {
         val db = AppDatabase.getAppDatabase(this).counterDao()
-        if (db?.isCounterPresent(counters.entityID) == true) {
+        // Check if counter with same counterId already exists
+        val existingCounter = db?.getCounterById(counters.counterId)
+        if (existingCounter != null) {
+            // Update existing counter instead of adding new record
             db.updateCounterOffline(
                 counters.counterId,
                 counterName = counters.counterName,
@@ -103,8 +107,10 @@ object LocalDB {
                 serviceAssign = counters.serviceAssign,
                 serviceId = counters.serviceId
             )
+            Log.d("LocalDB", "Updated existing counter: ${counters.counterId}")
         } else {
             db?.addCounter(counters)
+            Log.d("LocalDB", "Added new counter: ${counters.counterId}")
         }
         ("${db?.getAllCounter()}").printLog()
         return db?.getAllCounter() as ArrayList<CounterDataDbModel?>
